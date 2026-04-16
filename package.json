@@ -1,16 +1,21 @@
 {
-  "name": "memento-mcp",
+  "name": "@lfrmonteiro99/memento-memory-mcp",
   "version": "1.0.0",
   "description": "Persistent memory MCP server with typed memories, decay scoring, and token-aware context injection",
   "type": "module",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "license": "MIT",
   "author": "Luis Monteiro",
-  "repository": { "type": "git", "url": "https://github.com/luismonteiro-sinmetro/memento-mcp.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lfrmonteiro99/memento-mcp.git"
+  },
   "bin": {
-    "memento-mcp": "./dist/cli/main.js",
-    "memento-hook-search": "./dist/hooks/search-context.js",
-    "memento-hook-session": "./dist/hooks/session-context.js"
+    "memento-mcp": "dist/cli/main.js",
+    "memento-hook-search": "dist/hooks/search-context.js",
+    "memento-hook-session": "dist/hooks/session-context.js"
   },
   "scripts": {
     "build": "tsup src/index.ts src/cli/main.ts src/hooks/search-context.ts src/hooks/session-context.ts --format esm --dts --clean",
@@ -31,5 +36,12 @@
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   },
-  "files": ["dist", "README.md", "LICENSE"]
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  }
 }
