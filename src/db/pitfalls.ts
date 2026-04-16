@@ -43,6 +43,14 @@ export class PitfallsRepo {
     `).all(projectId, limit) as any[];
   }
 
+  listAll(limit = 10, includeResolved = false): any[] {
+    const resolvedClause = includeResolved ? "" : "AND resolved = 0";
+    return this.db.prepare(`
+      SELECT * FROM pitfalls WHERE deleted_at IS NULL ${resolvedClause}
+      ORDER BY occurrence_count DESC, importance_score DESC LIMIT ?
+    `).all(limit) as any[];
+  }
+
   resolve(pitfallId: string): boolean {
     return this.db.prepare("UPDATE pitfalls SET resolved = 1 WHERE id = ? AND deleted_at IS NULL").run(pitfallId).changes > 0;
   }
