@@ -60,7 +60,7 @@ export class MemoriesRepo {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, projectId, params.memoryType ?? "fact", params.scope ?? "project",
            params.title, params.body, tagsStr, params.importance ?? 0.5,
-           params.pin ? 1 : 0, params.supersedesId ?? null, now, now, now);
+           params.pin ? 1 : 0, params.supersedesId || null, now, now, now);
     return id;
   }
 
