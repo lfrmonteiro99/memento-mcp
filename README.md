@@ -16,12 +16,29 @@ Persistent memory MCP server for AI coding assistants. Stores typed memories (fa
 
 ## Install
 
+The package is hosted on **GitHub Packages** (not the public npm registry). You need a GitHub account and a Personal Access Token (PAT) with `read:packages` scope.
+
+### 1. Create a GitHub PAT
+
+Go to [GitHub → Settings → Developer Settings → Personal Access Tokens](https://github.com/settings/tokens) and create a token with `read:packages` checked.
+
+### 2. Configure npm to use GitHub Packages for this scope
+
 ```bash
-npm install -g memento-mcp
+npm config set @lfrmonteiro99:registry https://npm.pkg.github.com
+echo "//npm.pkg.github.com/:_authToken=YOUR_PAT_HERE" >> ~/.npmrc
+```
+
+Replace `YOUR_PAT_HERE` with the token you just created.
+
+### 3. Install globally and run the installer
+
+```bash
+npm install -g @lfrmonteiro99/memento-memory-mcp
 memento-mcp install
 ```
 
-The installer auto-detects your MCP client (Claude Code, Cursor, or manual), registers the MCP server, sets up hooks (Claude Code only), creates the data directory, and generates a default config file.
+The installer auto-detects your MCP client (Claude Code, Cursor, or manual), registers the MCP server, sets up hooks (Claude Code only), creates the data directory, generates a default config file, and runs the **Obsidian vault wizard** (optional — see [Vault Integration](#vault-integration) below).
 
 If running via `npx` without a global install, the installer will warn you — hooks require a globally installed binary to survive npm upgrades.
 
@@ -30,6 +47,73 @@ If running via `npx` without a global install, the installer will warn you — h
 ```bash
 memento-mcp uninstall
 ```
+
+## Vault Integration
+
+memento-mcp can index your [Obsidian](https://obsidian.md) vault and surface relevant notes directly in hook context. The install wizard asks if you want this — it auto-discovers vaults, scaffolds required root notes, and builds the index automatically.
+
+### How it works
+
+1. **Indexing** — `rebuildVaultIndex` scans the vault, parses YAML frontmatter, builds a graph of explicit `memento_children` links and `[[wikilinks]]`, and marks orphaned notes.
+2. **Routing** — on each hook invocation, `searchVault` classifies the prompt intent (procedure/decision/project/domain), traverses the graph from root notes up to `max_hops`, and scores results by relevance × routing distance × note kind.
+3. **Injection** — results above confidence threshold `0.25` are injected as `[vault/kind] title: summary` lines alongside SQLite and file memories.
+
+### Required frontmatter
+
+Notes are only indexed if they include `memento_publish: true` in their YAML frontmatter (configurable):
+
+```yaml
+---
+memento_publish: true
+memento_kind: skill          # identity | map | domain | project | playbook | skill | decision | source
+memento_summary: One-line summary injected into hooks.
+tags:
+  - scheduling
+---
+```
+
+### Root notes
+
+Two root notes are required at the vault root (auto-created by the installer or `memento-mcp vault-index init`):
+
+- **`me.md`** — your identity: role, working style, constraints
+- **`vault.md`** — vault map: folder structure, routing rules, `memento_children` links
+
+### CLI commands
+
+```bash
+# Full rebuild of the vault index
+memento-mcp vault-index rebuild
+
+# Scaffold me.md and vault.md if missing
+memento-mcp vault-index init
+
+# Show stats: total / reachable / orphaned / edges / roots
+memento-mcp vault-index stats
+
+# List orphaned and missing-root issues
+memento-mcp vault-index doctor
+```
+
+### Vault config (config.toml)
+
+```toml
+[vault]
+enabled = true
+path = "/path/to/your/Obsidian/vault"
+require_publish_flag = true   # only index notes with memento_publish: true
+max_hops = 3                  # BFS depth from root notes
+max_results = 5               # max results per memory_search call
+hook_max_results = 2          # max vault results injected per hook invocation
+```
+
+The `include_folders` and `exclude_folders` defaults cover the standard Obsidian folder structure. Override in config if your vault layout differs.
+
+### MCP tools — vault support
+
+- **`memory_search`** — vault results appended after SQLite results when vault is enabled
+- **`memory_get vault:path/to/note.md`** — fetch full content of a vault note by its `vault:` prefixed ID
+- **`memory_list vault_kind=skill`** — list vault notes filtered by kind or folder
 
 ## Configuration
 
@@ -122,7 +206,7 @@ If you hit a compilation error:
 
 ```bash
 npm install -g node-gyp
-npm install -g memento-mcp --build-from-source
+npm install -g @lfrmonteiro99/memento-memory-mcp --build-from-source
 ```
 
 ## Privacy
