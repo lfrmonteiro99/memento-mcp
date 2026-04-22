@@ -3,20 +3,46 @@ import { join } from "node:path";
 import { homedir, platform } from "node:os";
 import { parse as parseTOML } from "smol-toml";
 
+export interface VaultConfig {
+  enabled: boolean;
+  path: string;
+  includeFolders: string[];
+  excludeFolders: string[];
+  requirePublishFlag: boolean;
+  rootNotes: string[];
+  maxHops: number;
+  maxResults: number;
+  hookMaxResults: number;
+}
+
 export interface Config {
   budget: { total: number; floor: number; refill: number; sessionTimeout: number };
   search: { defaultDetail: "index" | "full"; maxResults: number; bodyPreviewChars: number };
   hooks: { trivialSkip: boolean; sessionStartMemories: number; sessionStartPitfalls: number; customTrivialPatterns: string[] };
   pruning: { enabled: boolean; maxAgeDays: number; minImportance: number; intervalHours: number };
   database: { path: string };
+  vault: VaultConfig;
 }
+
+export const DEFAULT_VAULT_CONFIG: VaultConfig = {
+  enabled: false,
+  path: "",
+  includeFolders: ["10 Maps", "20 Projects", "30 Domains", "40 Decisions", "50 Playbooks", "55 Skills"],
+  excludeFolders: [".obsidian", "00 Inbox", "00 Inbox/attachments", "15 Calendar", "25 Efforts", "60 Sources", "70 Templates", "90 Archive"],
+  requirePublishFlag: true,
+  rootNotes: ["me.md", "vault.md"],
+  maxHops: 3,
+  maxResults: 5,
+  hookMaxResults: 2,
+};
 
 export const DEFAULT_CONFIG: Config = {
   budget: { total: 8000, floor: 500, refill: 200, sessionTimeout: 1800 },
-  search: { defaultDetail: "full", maxResults: 10, bodyPreviewChars: 200 },
+  search: { defaultDetail: "index", maxResults: 10, bodyPreviewChars: 200 },
   hooks: { trivialSkip: true, sessionStartMemories: 5, sessionStartPitfalls: 5, customTrivialPatterns: [] },
   pruning: { enabled: true, maxAgeDays: 60, minImportance: 0.3, intervalHours: 24 },
   database: { path: "" },
+  vault: { ...DEFAULT_VAULT_CONFIG },
 };
 
 export function loadConfig(configPath: string): Config {
@@ -51,6 +77,18 @@ export function loadConfig(configPath: string): Config {
     }
     if (toml.database) {
       if (toml.database.path) config.database.path = String(toml.database.path);
+    }
+    if (toml.vault) {
+      const v = toml.vault;
+      if (v.enabled != null) config.vault.enabled = Boolean(v.enabled);
+      if (v.path) config.vault.path = String(v.path);
+      if (Array.isArray(v.include_folders)) config.vault.includeFolders = v.include_folders.map(String);
+      if (Array.isArray(v.exclude_folders)) config.vault.excludeFolders = v.exclude_folders.map(String);
+      if (v.require_publish_flag != null) config.vault.requirePublishFlag = Boolean(v.require_publish_flag);
+      if (Array.isArray(v.root_notes)) config.vault.rootNotes = v.root_notes.map(String);
+      if (v.max_hops != null) config.vault.maxHops = Number(v.max_hops);
+      if (v.max_results != null) config.vault.maxResults = Number(v.max_results);
+      if (v.hook_max_results != null) config.vault.hookMaxResults = Number(v.hook_max_results);
     }
   } catch {
     // File not found or invalid TOML — use defaults

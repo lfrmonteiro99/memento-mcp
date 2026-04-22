@@ -15,6 +15,8 @@ import { handleMemoryList } from "./tools/memory-list.js";
 import { handleMemoryDelete } from "./tools/memory-delete.js";
 import { handleDecisionsLog } from "./tools/decisions-log.js";
 import { handlePitfallsLog } from "./tools/pitfalls-log.js";
+import { handleMemoryAnalytics } from "./tools/analytics-tools.js";
+import { AnalyticsTracker, installFlushOnExit } from "./analytics/tracker.js";
 
 const log = createLogger(logLevelFromEnv());
 const config = loadConfig(getDefaultConfigPath());
@@ -23,6 +25,8 @@ const memRepo = new MemoriesRepo(db);
 const decRepo = new DecisionsRepo(db);
 const pitRepo = new PitfallsRepo(db);
 const sessRepo = new SessionsRepo(db);
+const analyticsTracker = new AnalyticsTracker(db, { flushThreshold: 20 });
+const disposeFlush = installFlushOnExit(analyticsTracker);
 
 // Initial prune
 const pruned = memRepo.pruneStale(config.pruning.maxAgeDays, config.pruning.minImportance);
@@ -46,6 +50,8 @@ if (config.pruning.enabled) {
 // Graceful shutdown
 function shutdown(): void {
   if (pruneTimer) clearInterval(pruneTimer);
+  try { analyticsTracker.flush(); } catch { /* ignore */ }
+  disposeFlush();
   try { db.close(); } catch { /* ignore */ }
   process.exit(0);
 }
@@ -56,7 +62,7 @@ const server = new McpServer({ name: "memento-mcp", version: "1.0.0" });
 
 server.tool(
   "memory_store",
-  "Store a memory. Types: fact, decision, preference, pattern, architecture, pitfall. Scope: project or global. Pin to protect from pruning. Use supersedes_id to replace an existing memory.",
+  "Persist a fact, decision, or pattern. Auto-indexed for search.",
   {
     title: z.string(),
     content: z.string(),
@@ -75,7 +81,7 @@ server.tool(
 
 server.tool(
   "memory_search",
-  "Search memories using full-text search. detail='index': titles + scores only (~30 tokens/result). detail='full': titles + body preview (~120 tokens/result). Use memory_get(id) for complete body.",
+  "Search memories by query. Returns ranked results.",
   {
     query: z.string(),
     project_path: z.string().default(""),
@@ -85,24 +91,24 @@ server.tool(
     include_file_memories: z.boolean().default(true),
   },
   async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemorySearch(memRepo, config, params) }],
+    content: [{ type: "text" as const, text: await handleMemorySearch(memRepo, config, params, db) }],
   })
 );
 
 server.tool(
   "memory_get",
-  "Retrieve full content of a specific memory by ID. Use after memory_search(detail='index') to get complete body.",
+  "Get full content of a memory by ID.",
   {
     memory_id: z.string(),
   },
   async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryGet(memRepo, params) }],
+    content: [{ type: "text" as const, text: await handleMemoryGet(memRepo, db, config, params) }],
   })
 );
 
 server.tool(
   "memory_list",
-  "List memories with optional filters. No search query needed.",
+  "List memories with optional filters.",
   {
     project_path: z.string().default(""),
     memory_type: z.string().default(""),
@@ -111,15 +117,17 @@ server.tool(
     limit: z.number().default(20),
     detail: z.enum(["index", "full"]).default("full"),
     include_file_memories: z.boolean().default(false),
+    vault_kind: z.string().default(""),
+    vault_folder: z.string().default(""),
   },
   async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryList(memRepo, config, params) }],
+    content: [{ type: "text" as const, text: await handleMemoryList(memRepo, config, params, db) }],
   })
 );
 
 server.tool(
   "memory_delete",
-  "Soft-delete a memory by ID. Only works for SQLite memories (not file-based).",
+  "Soft-delete a memory by ID.",
   {
     memory_id: z.string(),
   },
@@ -130,7 +138,7 @@ server.tool(
 
 server.tool(
   "decisions_log",
-  "Log, list, or search architectural decisions. action: 'store' (title+body), 'list', 'search' (query). Categories: general, architecture, tooling, convention, performance.",
+  "Store, list, or search architectural decisions.",
   {
     action: z.string(),
     project_path: z.string(),
@@ -149,7 +157,7 @@ server.tool(
 
 server.tool(
   "pitfalls_log",
-  "Track recurring problems. action: 'store' (title+body, auto-increments on duplicate), 'list' (unresolved by default), 'resolve' (pitfall_id).",
+  "Track recurring problems and their resolutions.",
   {
     action: z.string(),
     project_path: z.string(),
@@ -162,6 +170,19 @@ server.tool(
   },
   async (params) => ({
     content: [{ type: "text" as const, text: await handlePitfallsLog(pitRepo, params) }],
+  })
+);
+
+server.tool(
+  "memory_analytics",
+  "View memory effectiveness: utility rates, token costs, auto-capture stats, prune suggestions.",
+  {
+    period: z.enum(["last_24h", "last_7d", "last_30d", "all"]).default("last_7d"),
+    section: z.enum(["all", "injections", "captures", "compression", "memories"]).default("all"),
+    project_path: z.string().default(""),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryAnalytics(db, params) }],
   })
 );
 

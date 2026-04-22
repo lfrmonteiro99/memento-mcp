@@ -43,12 +43,12 @@ describe("memory tools", () => {
   it("memory_get returns full body", async () => {
     const longBody = "detailed content ".repeat(50);
     const id = repo.store({ title: "detailed", body: longBody, memoryType: "fact", scope: "global" });
-    const result = await handleMemoryGet(repo, { memory_id: id });
+    const result = await handleMemoryGet(repo, db, config, { memory_id: id });
     expect(result).toContain(longBody); // not truncated
   });
 
   it("memory_get returns error for missing ID", async () => {
-    const result = await handleMemoryGet(repo, { memory_id: "nonexistent" });
+    const result = await handleMemoryGet(repo, db, config, { memory_id: "nonexistent" });
     expect(result).toContain("not found");
   });
 

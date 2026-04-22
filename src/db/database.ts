@@ -7,6 +7,7 @@ interface Migration {
   version: number;
   name: string;
   sql: string;
+  afterSql?: (db: Database.Database) => void;
 }
 
 const MIGRATIONS: Migration[] = [
@@ -96,6 +97,118 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 `,
   },
+  {
+    version: 2,
+    name: "v2_analytics_compression_adaptive",
+    sql: `
+CREATE TABLE IF NOT EXISTS analytics_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    project_id TEXT,
+    memory_id TEXT,
+    event_type TEXT NOT NULL,
+    event_data TEXT,
+    tokens_cost INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_analytics_session ON analytics_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_analytics_memory ON analytics_events(memory_id);
+CREATE INDEX IF NOT EXISTS idx_analytics_type ON analytics_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_analytics_created ON analytics_events(created_at);
+
+CREATE TABLE IF NOT EXISTS compression_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    compressed_memory_id TEXT NOT NULL,
+    source_memory_ids TEXT NOT NULL,
+    tokens_before INTEGER NOT NULL,
+    tokens_after INTEGER NOT NULL,
+    compression_ratio REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_compression_memory ON compression_log(compressed_memory_id);
+`,
+    afterSql: (db: Database.Database) => {
+      const columns = db.pragma("table_info(memories)") as Array<{ name: string }>;
+      const columnNames = columns.map(c => c.name);
+
+      if (!columnNames.includes("source")) {
+        db.exec("ALTER TABLE memories ADD COLUMN source TEXT DEFAULT 'user'");
+      }
+      if (!columnNames.includes("adaptive_score")) {
+        db.exec("ALTER TABLE memories ADD COLUMN adaptive_score REAL DEFAULT 0.5");
+      }
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memories_project_active_score
+        ON memories(project_id, deleted_at, adaptive_score DESC)
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memories_project_source
+        ON memories(project_id, source, deleted_at)
+      `);
+
+
+      // K5: Convert CSV-format tags to JSON arrays. Legacy v1 rows stored tags as
+      // comma-joined strings; v2 expects JSON. Detect by first-character: a JSON
+      // array starts with '['. Leave NULL and already-JSON rows alone.
+      const csvRows = db.prepare(
+        "SELECT id, tags FROM memories WHERE tags IS NOT NULL AND tags != '' AND substr(tags, 1, 1) != '['"
+      ).all() as Array<{ id: string; tags: string }>;
+      const updateTags = db.prepare("UPDATE memories SET tags = ? WHERE id = ?");
+      for (const row of csvRows) {
+        const parts = row.tags.split(",").map((t: string) => t.trim()).filter((t: string) => t.length > 0);
+        updateTags.run(JSON.stringify(parts), row.id);
+      }
+    },
+  },
+  {
+    version: 3,
+    name: "vault_index",
+    sql: `
+CREATE TABLE IF NOT EXISTS vault_notes (
+  id              TEXT PRIMARY KEY,
+  vault_path      TEXT NOT NULL,
+  relative_path   TEXT NOT NULL,
+  title           TEXT NOT NULL,
+  kind            TEXT NOT NULL DEFAULT 'source',
+  summary         TEXT,
+  aliases_json    TEXT,
+  tags_json       TEXT,
+  body_mode       TEXT NOT NULL DEFAULT 'summary',
+  weight          REAL NOT NULL DEFAULT 1.0,
+  routable        INTEGER NOT NULL DEFAULT 1,
+  blocked         INTEGER NOT NULL DEFAULT 0,
+  orphan          INTEGER NOT NULL DEFAULT 1,
+  mtime_ms        INTEGER NOT NULL DEFAULT 0,
+  body_hash       TEXT,
+  breadcrumb_json TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_vault_notes_path ON vault_notes(vault_path, relative_path);
+CREATE INDEX IF NOT EXISTS idx_vault_notes_kind ON vault_notes(kind);
+CREATE INDEX IF NOT EXISTS idx_vault_notes_routable ON vault_notes(routable, orphan);
+
+CREATE TABLE IF NOT EXISTS vault_edges (
+  from_id   TEXT NOT NULL,
+  to_id     TEXT NOT NULL,
+  edge_type TEXT NOT NULL,
+  weight    REAL NOT NULL DEFAULT 1.0,
+  PRIMARY KEY (from_id, to_id, edge_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vault_edges_from ON vault_edges(from_id);
+CREATE INDEX IF NOT EXISTS idx_vault_edges_to ON vault_edges(to_id);
+
+CREATE TABLE IF NOT EXISTS vault_roots (
+  note_id   TEXT PRIMARY KEY,
+  root_type TEXT NOT NULL
+);
+`,
+  },
 ];
 
 const FTS_TRIGGERS_SQL = `
@@ -135,13 +248,54 @@ export function createDatabase(dbPath: string): Database.Database {
 
   for (const migration of MIGRATIONS) {
     if (migration.version > currentVersion) {
-      db.exec(migration.sql);
-      db.pragma(`user_version = ${migration.version}`);
+      // I5: Wrap each migration step in a transaction (SQL + afterSql + version bump).
+      // Note: PRAGMA user_version takes effect immediately but the SQL + afterSql changes
+      // are rolled back if the transaction fails, leaving the DB in the previous version.
+      db.transaction(() => {
+        db.exec(migration.sql);
+        if (migration.afterSql) {
+          migration.afterSql(db);
+        }
+        db.pragma(`user_version = ${migration.version}`);
+      })();
     }
   }
 
-  // Apply FTS triggers separately (CREATE TRIGGER IF NOT EXISTS is idempotent)
-  db.exec(FTS_TRIGGERS_SQL);
+  // Apply FTS triggers separately (CREATE TRIGGER IF NOT EXISTS is idempotent).
+  // Guard: only create triggers if the referenced tables exist (e.g. a test may
+  // seed a partial v1 schema that lacks decisions/decisions_fts).
+  const existingTables = new Set(
+    (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>)
+      .map(r => r.name)
+  );
+  if (existingTables.has("memory_fts")) {
+    db.exec(`
+CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+    INSERT INTO memory_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+END;
+CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+    INSERT INTO memory_fts(memory_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body);
+END;
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+    INSERT INTO memory_fts(memory_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body);
+    INSERT INTO memory_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+END;
+`);
+  }
+  if (existingTables.has("decisions_fts")) {
+    db.exec(`
+CREATE TRIGGER IF NOT EXISTS decisions_ai AFTER INSERT ON decisions BEGIN
+    INSERT INTO decisions_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+END;
+CREATE TRIGGER IF NOT EXISTS decisions_ad AFTER DELETE ON decisions BEGIN
+    INSERT INTO decisions_fts(decisions_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body);
+END;
+CREATE TRIGGER IF NOT EXISTS decisions_au AFTER UPDATE ON decisions BEGIN
+    INSERT INTO decisions_fts(decisions_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, old.body);
+    INSERT INTO decisions_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body);
+END;
+`);
+  }
 
   return db;
 }

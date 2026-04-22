@@ -1,42 +1,66 @@
-// src/tools/memory-search.ts
+import type Database from "better-sqlite3";
 import type { MemoriesRepo } from "../db/memories.js";
 import type { Config } from "../lib/config.js";
 import { applyDecay } from "../lib/decay.js";
 import { searchFileMemories } from "../lib/file-memory.js";
-import { formatIndex, formatFull } from "../lib/formatter.js";
+import { formatIndex, formatFull, formatSummary, formatVaultEntry, formatVaultIndex } from "../lib/formatter.js";
+import { searchVault } from "../engine/vault-router.js";
 
-export async function handleMemorySearch(repo: MemoriesRepo, config: Config, params: {
-  query: string; project_path?: string; memory_type?: string;
-  limit?: number; detail?: "index" | "full"; include_file_memories?: boolean;
-}): Promise<string> {
+export async function handleMemorySearch(
+  repo: MemoriesRepo,
+  config: Config,
+  params: {
+    query: string; project_path?: string; memory_type?: string;
+    limit?: number; detail?: "index" | "summary" | "full"; include_file_memories?: boolean;
+  },
+  db?: Database.Database,
+): Promise<string> {
   const limit = params.limit ?? config.search.maxResults;
   const detail = params.detail ?? config.search.defaultDetail;
-  const results: any[] = [];
+  const sqliteResults: any[] = [];
 
-  const sqliteResults = repo.search(params.query, {
+  const raw = repo.search(params.query, {
     projectPath: params.project_path, memoryType: params.memory_type, limit,
   });
 
-  // Normalize FTS5 ranks and apply decay
-  const rawRanks = sqliteResults.map(r => Math.abs(r.rank ?? 0));
+  const rawRanks = raw.map(r => Math.abs(r.rank ?? 0));
   const maxRank = Math.max(...rawRanks, 1);
-  for (const r of sqliteResults) {
+  for (const r of raw) {
     const normalizedRank = Math.abs(r.rank ?? 0) / maxRank;
     const baseScore = normalizedRank * 0.6 + (r.importance_score ?? 0.5) * 0.4;
     r.score = applyDecay(baseScore, r.last_accessed_at);
     r.source = "sqlite";
-    results.push(r);
+    sqliteResults.push(r);
   }
 
   if (params.include_file_memories !== false) {
     const fileResults = searchFileMemories(params.query, params.project_path);
-    for (const r of fileResults) { r.source = "file"; results.push(r); }
+    for (const r of fileResults) { r.source = "file"; sqliteResults.push(r); }
   }
 
-  results.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-  const limited = results.slice(0, limit);
+  sqliteResults.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  const limitedSqlite = sqliteResults.slice(0, limit);
 
-  return detail === "index"
-    ? formatIndex(limited)
-    : formatFull(limited, config.search.bodyPreviewChars);
+  // Vault results — separate section appended after SQLite results
+  const vaultEntries = db && config.vault.enabled
+    ? searchVault(db, config.vault, params.query)
+    : [];
+
+  // Format SQLite/file results
+  let output = "";
+  if (detail === "index") output = formatIndex(limitedSqlite);
+  else if (detail === "summary") output = formatSummary(limitedSqlite);
+  else output = formatFull(limitedSqlite, config.search.bodyPreviewChars);
+
+  // Append vault results
+  if (vaultEntries.length > 0) {
+    const vaultSection = detail === "index"
+      ? formatVaultIndex(vaultEntries)
+      : vaultEntries.map(formatVaultEntry).join("\n\n");
+    output = output && output !== "No results found."
+      ? output + "\n\n" + vaultSection
+      : vaultSection;
+  }
+
+  return output || "No results found.";
 }
