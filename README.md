@@ -31,14 +31,13 @@ echo "//npm.pkg.github.com/:_authToken=YOUR_PAT_HERE" >> ~/.npmrc
 
 Replace `YOUR_PAT_HERE` with the token you just created.
 
-### 3. Install globally and run the installer
+### 3. Install globally
 
 ```bash
 npm install -g @lfrmonteiro99/memento-memory-mcp
-memento-mcp install
 ```
 
-The installer auto-detects your MCP client (Claude Code, Cursor, or manual), registers the MCP server, sets up hooks (Claude Code only), creates the data directory, generates a default config file, and runs the **Obsidian vault wizard** (optional — see [Vault Integration](#vault-integration) below).
+The install wizard runs automatically. It auto-detects your MCP client (Claude Code, Cursor, or manual), registers the MCP server, sets up hooks (Claude Code only), creates the data directory, generates a default config file, and runs the **Obsidian vault wizard** (optional — see [Vault Integration](#vault-integration) below).
 
 If running via `npx` without a global install, the installer will warn you — hooks require a globally installed binary to survive npm upgrades.
 

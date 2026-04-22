@@ -1,6 +1,6 @@
 {
   "name": "@lfrmonteiro99/memento-memory-mcp",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Persistent memory MCP server with typed memories, decay scoring, and token-aware context injection",
   "type": "module",
   "engines": {
@@ -23,6 +23,7 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
+    "postinstall": "node -e \"if(process.env.npm_config_global==='true'){require('child_process').execFileSync(process.execPath,['dist/cli/main.js','install'],{stdio:'inherit'})}\"",
     "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
