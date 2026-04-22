@@ -340,8 +340,12 @@ export async function runInstaller(): Promise<void> {
     console.log(`  ✗ Database error: ${e}`);
   }
 
-  // Vault onboarding wizard
-  await runVaultWizard();
+  // Vault onboarding wizard — requires interactive stdin (not available during npm postinstall)
+  if (process.stdin.isTTY) {
+    await runVaultWizard();
+  } else {
+    console.log("  Vault wizard skipped (non-interactive). Run 'memento-mcp install' to set up Obsidian integration.");
+  }
 
   console.log("\n  ✓ Installation complete!\n");
 }
