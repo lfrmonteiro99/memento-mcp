@@ -62,7 +62,7 @@ const server = new McpServer({ name: "memento-mcp", version: "1.0.0" });
 
 server.tool(
   "memory_store",
-  "Persist a fact, decision, or pattern. Auto-indexed for search.",
+  "Persist a typed memory in SQLite, with optional promotion to the Obsidian vault.",
   {
     title: z.string(),
     content: z.string(),
@@ -73,9 +73,14 @@ server.tool(
     importance: z.number().default(0.5),
     supersedes_id: z.string().default(""),
     pin: z.boolean().default(false),
+    persist_to_vault: z.boolean().optional(),
+    vault_mode: z.enum(["create", "create_or_update"]).default("create_or_update"),
+    vault_kind: z.string().default(""),
+    vault_folder: z.string().default(""),
+    vault_note_title: z.string().default(""),
   },
   async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryStore(memRepo, params) }],
+    content: [{ type: "text" as const, text: await handleMemoryStore(memRepo, params, db, config) }],
   })
 );
 
@@ -196,4 +201,3 @@ main().catch((e) => {
   log.error(`Fatal: ${e}`);
   process.exit(1);
 });
-

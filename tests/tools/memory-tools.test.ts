@@ -8,7 +8,7 @@ import { handleMemoryGet } from "../../src/tools/memory-get.js";
 import { handleMemoryList } from "../../src/tools/memory-list.js";
 import { handleMemoryDelete } from "../../src/tools/memory-delete.js";
 import { DEFAULT_CONFIG } from "../../src/lib/config.js";
-import { rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -24,6 +24,150 @@ describe("memory tools", () => {
   it("memory_store returns ID", async () => {
     const result = await handleMemoryStore(repo, { title: "test", content: "body", memory_type: "fact", scope: "global" });
     expect(result).toContain("Memory stored with ID:");
+  });
+
+  it("memory_store can persist to vault and rebuild index", async () => {
+    const vaultPath = join(tmpdir(), `memento-vault-${Date.now()}`);
+    const vaultConfig = {
+      ...DEFAULT_CONFIG,
+      vault: {
+        ...DEFAULT_CONFIG.vault,
+        enabled: true,
+        path: vaultPath,
+      },
+    };
+
+    try {
+      const rootNote = [
+        "---",
+        "memento_publish: true",
+        "memento_kind: map",
+        'memento_summary: "Vault navigation and routing rules."',
+        "---",
+        "",
+        "# Vault",
+        "",
+      ].join("\n");
+      rmSync(vaultPath, { recursive: true, force: true });
+      await handleMemoryStore(
+        repo,
+        {
+          title: "Respond concisely",
+          content: "Keep answers concise, truthful, and contextual.",
+          memory_type: "preference",
+          scope: "global",
+          persist_to_vault: true,
+        },
+        db,
+        vaultConfig,
+      );
+
+      const vaultMapPath = join(vaultPath, "vault.md");
+      expect(existsSync(vaultMapPath)).toBe(false);
+      rmSync(vaultPath, { recursive: true, force: true });
+
+      // Create root notes so promoted notes become reachable in the index.
+      const mePath = join(vaultPath, "me.md");
+      const vaultRootPath = join(vaultPath, "vault.md");
+      await import("node:fs").then(({ mkdirSync, writeFileSync }) => {
+        mkdirSync(vaultPath, { recursive: true });
+        writeFileSync(mePath, [
+          "---",
+          "memento_publish: true",
+          "memento_kind: identity",
+          'memento_summary: "Identity."',
+          "---",
+          "",
+          "# Me",
+          "",
+        ].join("\n"), "utf-8");
+        writeFileSync(vaultRootPath, rootNote, "utf-8");
+      });
+
+      const result = await handleMemoryStore(
+        repo,
+        {
+          title: "Respond concisely",
+          content: "Keep answers concise, truthful, and contextual.",
+          memory_type: "preference",
+          scope: "global",
+          persist_to_vault: true,
+        },
+        db,
+        vaultConfig,
+      );
+
+      expect(result).toContain("Vault note created:");
+      const files = await import("node:fs").then(({ readdirSync }) =>
+        readdirSync(join(vaultPath, "30 Domains", "Memento Preferences"))
+      );
+      expect(files.length).toBe(1);
+      const notePath = join(vaultPath, "30 Domains", "Memento Preferences", files[0]);
+      const noteContent = readFileSync(notePath, "utf-8");
+      expect(noteContent).toContain("memento_memory_id:");
+      expect(noteContent).toContain("Keep answers concise");
+      expect(readFileSync(vaultRootPath, "utf-8")).toContain("[[10 Maps/memento-store-index]]");
+
+      const listed = await handleMemoryList(repo, vaultConfig, { detail: "index", vault_kind: "domain" }, db);
+      expect(listed).toContain("Respond concisely");
+    } finally {
+      rmSync(vaultPath, { recursive: true, force: true });
+    }
+  });
+
+  it("memory_store can auto-promote by config when persist_to_vault is omitted", async () => {
+    const vaultPath = join(tmpdir(), `memento-vault-autopromote-${Date.now()}`);
+    const vaultConfig = {
+      ...DEFAULT_CONFIG,
+      vault: {
+        ...DEFAULT_CONFIG.vault,
+        enabled: true,
+        path: vaultPath,
+        autoPromoteTypes: ["preference"],
+      },
+    };
+
+    try {
+      await import("node:fs").then(({ mkdirSync, writeFileSync }) => {
+        mkdirSync(vaultPath, { recursive: true });
+        writeFileSync(join(vaultPath, "me.md"), [
+          "---",
+          "memento_publish: true",
+          "memento_kind: identity",
+          'memento_summary: "Identity."',
+          "---",
+          "",
+          "# Me",
+          "",
+        ].join("\n"), "utf-8");
+        writeFileSync(join(vaultPath, "vault.md"), [
+          "---",
+          "memento_publish: true",
+          "memento_kind: map",
+          'memento_summary: "Vault map."',
+          "---",
+          "",
+          "# Vault",
+          "",
+        ].join("\n"), "utf-8");
+      });
+
+      const result = await handleMemoryStore(
+        repo,
+        {
+          title: "Stable reply style",
+          content: "Prefer concise and truthful answers.",
+          memory_type: "preference",
+          scope: "global",
+        },
+        db,
+        vaultConfig,
+      );
+
+      expect(result).toContain("Vault note created:");
+    } finally {
+      rmSync(vaultPath, { recursive: true, force: true });
+    }
   });
 
   it("memory_search detail=index returns compact format", async () => {

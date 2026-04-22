@@ -1,129 +1,230 @@
 # memento-mcp
 
-Persistent memory MCP server for AI coding assistants. Stores typed memories (facts, decisions, preferences, patterns, architecture notes, pitfalls) in SQLite with FTS5 full-text search, memory decay scoring, and token-aware context injection via hooks. Compatible with Claude Code, Cursor, Windsurf, and any MCP client.
+Persistent memory MCP server for coding agents and apps. `memento-mcp` stores typed operational memory in SQLite, can index a curated Obsidian vault, and injects relevant context back into supported clients.
 
-## Key Features
+![Memento Memory MCP overview](docs/assets/hero-overview.png)
 
-- **Typed memories** — 6 semantic categories: fact, decision, preference, pattern, architecture, pitfall
-- **FTS5 full-text search** — fast ranked search with relevance scoring
-- **Memory decay** — time-based score degradation (3 tiers: fresh / aging / stale)
-- **Decisions log** — versioned architectural decisions with `supersedes_id` support
-- **Pitfalls tracker** — recurring problem tracking with occurrence count and auto-dedup
-- **Progressive disclosure** — `detail="index"` returns ~30 tokens/result; `memory_get(id)` fetches full body on demand
-- **Smart hook skip** — trivial prompts ("ok", "yes", "done") skip memory injection entirely (~60% token waste eliminated)
-- **Adaptive token budget** — per-session budget tracked in SQLite; scales results to tier (trivial=0, standard=3, complex=5)
-- **File memory hybrid** — reads Claude Code's native `.md` memory files alongside SQLite results
+## What It Is
+
+`memento-mcp` has two complementary knowledge layers:
+
+- **SQLite memory layer** for fast, typed, operational memory written by the agent
+- **Vault knowledge layer** for curated Markdown notes from an Obsidian vault
+
+That split is intentional:
+
+- `memory_store` always writes to SQLite
+- vault notes are read, routed, indexed, and optionally promoted from stored memories
+- searches and hooks can combine SQLite memories, vault notes, and legacy file memories
+
+![What is Memento Memory MCP](docs/assets/what-is-memento-memory-mcp.png)
+
+## Why Use It
+
+- **Typed memory**: fact, decision, preference, pattern, architecture, pitfall
+- **Fast search**: FTS5 ranking with decay-aware scoring
+- **Hook-ready context injection**: useful for Claude Code and similar workflows
+- **Curated vault support**: route through `me.md`, `vault.md`, maps, skills, and playbooks
+- **Optional vault promotion**: persist a memory to SQLite and also write it into your vault
+- **Local-first**: SQLite and vault files stay on your machine
+
+![Why use Memento Memory MCP](docs/assets/why-use-memento-memory-mcp.png)
+
+## Prerequisites
+
+Before installation, make sure you have:
+
+- **Node.js** `>=18`
+- **npm**
+- a **GitHub Personal Access Token** with `read:packages` to install from GitHub Packages
+- a supported MCP client such as **Codex**, **Claude Code**, **Cursor**, or another stdio-compatible MCP client
+
+Recommended:
+
+- **Node 20** for development and test runs
+- an **Obsidian vault** if you want vault integration
+
+If `better-sqlite3` needs compilation on your machine, install the usual native build prerequisites for Node addons.
 
 ## Install
 
-The package is hosted on **GitHub Packages** (not the public npm registry). You need a GitHub account and a Personal Access Token (PAT) with `read:packages` scope.
+The package is published on **GitHub Packages**, not the public npm registry.
 
-### 1. Create a GitHub PAT
-
-Go to [GitHub → Settings → Developer Settings → Personal Access Tokens](https://github.com/settings/tokens) and create a token with `read:packages` checked.
-
-### 2. Configure npm to use GitHub Packages for this scope
+### 1. Configure npm for GitHub Packages
 
 ```bash
 npm config set @lfrmonteiro99:registry https://npm.pkg.github.com
 echo "//npm.pkg.github.com/:_authToken=YOUR_PAT_HERE" >> ~/.npmrc
 ```
 
-Replace `YOUR_PAT_HERE` with the token you just created.
+Replace `YOUR_PAT_HERE` with a GitHub PAT that has `read:packages`.
 
-### 3. Install globally
+### 2. Install globally
 
 ```bash
 npm install -g @lfrmonteiro99/memento-memory-mcp
 ```
 
-The install wizard runs automatically. It auto-detects your MCP client (Claude Code, Cursor, or manual), registers the MCP server, sets up hooks (Claude Code only), creates the data directory, generates a default config file, and runs the **Obsidian vault wizard** (optional — see [Vault Integration](#vault-integration) below).
+Global install matters because:
 
-If running via `npx` without a global install, the installer will warn you — hooks require a globally installed binary to survive npm upgrades.
+- the executable `memento-mcp` is then available on `PATH`
+- Claude Code hooks can call `memento-hook-search`, `memento-hook-session`, and `memento-hook-capture`
 
-**Uninstall** (removes hooks + MCP config entry, keeps data):
+### 3. Optional installer
 
-```bash
-memento-mcp uninstall
-```
-
-## Vault Integration
-
-memento-mcp can index your [Obsidian](https://obsidian.md) vault and surface relevant notes directly in hook context. The install wizard asks if you want this — it auto-discovers vaults, scaffolds required root notes, and builds the index automatically.
-
-### How it works
-
-1. **Indexing** — `rebuildVaultIndex` scans the vault, parses YAML frontmatter, builds a graph of explicit `memento_children` links and `[[wikilinks]]`, and marks orphaned notes.
-2. **Routing** — on each hook invocation, `searchVault` classifies the prompt intent (procedure/decision/project/domain), traverses the graph from root notes up to `max_hops`, and scores results by relevance × routing distance × note kind.
-3. **Injection** — results above confidence threshold `0.25` are injected as `[vault/kind] title: summary` lines alongside SQLite and file memories.
-
-### Required frontmatter
-
-Notes are only indexed if they include `memento_publish: true` in their YAML frontmatter (configurable):
-
-```yaml
----
-memento_publish: true
-memento_kind: skill          # identity | map | domain | project | playbook | skill | decision | source
-memento_summary: One-line summary injected into hooks.
-tags:
-  - scheduling
----
-```
-
-### Root notes
-
-Two root notes are required at the vault root (auto-created by the installer or `memento-mcp vault-index init`):
-
-- **`me.md`** — your identity: role, working style, constraints
-- **`vault.md`** — vault map: folder structure, routing rules, `memento_children` links
-
-### CLI commands
+You can still run the installer:
 
 ```bash
-# Full rebuild of the vault index
-memento-mcp vault-index rebuild
-
-# Scaffold me.md and vault.md if missing
-memento-mcp vault-index init
-
-# Show stats: total / reachable / orphaned / edges / roots
-memento-mcp vault-index stats
-
-# List orphaned and missing-root issues
-memento-mcp vault-index doctor
+memento-mcp install
 ```
 
-### Vault config (config.toml)
+But the manual setup below is the stable path if the client-specific `add` flows are not behaving well.
+
+## Manual Client Setup
+
+Restart the client after editing its config.
+
+### Codex
+
+Codex uses `~/.codex/config.toml`.
+
+Add:
 
 ```toml
-[vault]
-enabled = true
-path = "/path/to/your/Obsidian/vault"
-require_publish_flag = true   # only index notes with memento_publish: true
-max_hops = 3                  # BFS depth from root notes
-max_results = 5               # max results per memory_search call
-hook_max_results = 2          # max vault results injected per hook invocation
+[mcp_servers.memento-mcp]
+command = "memento-mcp"
+args = []
 ```
 
-The `include_folders` and `exclude_folders` defaults cover the standard Obsidian folder structure. Override in config if your vault layout differs.
+If `memento-mcp` is not on `PATH`, use an absolute command instead. A working example looks like:
 
-### MCP tools — vault support
+```toml
+[mcp_servers.memento-mcp]
+command = "/home/you/.nvm/versions/node/v20.20.2/bin/node"
+args = ["/home/you/.nvm/versions/node/v20.20.2/lib/node_modules/@lfrmonteiro99/memento-memory-mcp/dist/cli/main.js"]
+```
 
-- **`memory_search`** — vault results appended after SQLite results when vault is enabled
-- **`memory_get vault:path/to/note.md`** — fetch full content of a vault note by its `vault:` prefixed ID
-- **`memory_list vault_kind=skill`** — list vault notes filtered by kind or folder
+### Claude Code
+
+Claude Code uses `~/.claude/settings.json`.
+
+Add the MCP server:
+
+```json
+{
+  "mcpServers": {
+    "memento-mcp": {
+      "command": "memento-mcp",
+      "args": [],
+      "type": "stdio"
+    }
+  }
+}
+```
+
+If you want context hooks as well, add:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "memento-hook-session", "timeout": 5 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "memento-hook-search", "timeout": 5 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Read|Grep|Edit",
+        "hooks": [
+          { "type": "command", "command": "memento-hook-capture", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Notes:
+
+- `SessionStart` injects initial memory context
+- `UserPromptSubmit` injects query-time memory context
+- `PostToolUse` is optional but enables auto-capture from tool results
+
+### Cursor
+
+Cursor uses `~/.cursor/mcp.json`.
+
+Add:
+
+```json
+{
+  "mcpServers": {
+    "memento-mcp": {
+      "command": "memento-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+### Generic MCP Client
+
+If your client supports stdio MCP servers, use this shape:
+
+```json
+{
+  "command": "memento-mcp",
+  "args": [],
+  "type": "stdio"
+}
+```
+
+If PATH resolution is unreliable in your client, prefer the absolute `node` + `dist/cli/main.js` form shown above for Codex.
+
+## Verify Installation
+
+After setup:
+
+1. Restart your client
+2. Confirm the MCP server appears in the client
+3. Call:
+
+```text
+memory_store(title="test", content="hello", memory_type="fact", scope="global")
+```
+
+4. Then call:
+
+```text
+memory_search(query="hello", detail="full")
+```
+
+If both work, the MCP server is wired correctly.
 
 ## Configuration
 
-Config file: `~/.config/memento-mcp/config.toml` (Linux/macOS) or `%APPDATA%/memento-mcp/config.toml` (Windows).
+Config file:
+
+- Linux/macOS: `~/.config/memento-mcp/config.toml`
+- Windows: `%APPDATA%/memento-mcp/config.toml`
+
+Example:
 
 ```toml
 [budget]
-total = 8000          # per-session token budget for hooks
-floor = 500           # minimum budget before scaling to 1 result
-refill = 200          # tokens refilled on complex prompts
-session_timeout = 1800  # seconds of idle before new session
+total = 8000
+floor = 500
+refill = 200
+session_timeout = 1800
 
 [search]
 default_detail = "full"
@@ -134,7 +235,7 @@ body_preview_chars = 200
 trivial_skip = true
 session_start_memories = 5
 session_start_pitfalls = 5
-custom_trivial_patterns = []  # e.g. ["roger", "ack", "vale"]
+custom_trivial_patterns = []
 
 [pruning]
 enabled = true
@@ -143,93 +244,238 @@ min_importance = 0.3
 interval_hours = 24
 
 [database]
-path = ""  # empty = platform default
+path = ""
+
+[vault]
+enabled = false
+path = ""
+require_publish_flag = true
+max_hops = 3
+max_results = 5
+hook_max_results = 2
+auto_promote_types = []
 ```
 
-Environment variable overrides: `MEMENTO_BUDGET`, `MEMENTO_FLOOR`, `MEMENTO_LOG_LEVEL` (error/warn/info/debug, default: warn).
+Environment variable overrides:
+
+- `MEMENTO_BUDGET`
+- `MEMENTO_FLOOR`
+- `MEMENTO_REFILL`
+- `MEMENTO_SESSION_TIMEOUT`
+- `MEMENTO_LOG_LEVEL`
+
+## Vault Integration
+
+When enabled, `memento-mcp` can index an Obsidian vault and use it as a curated knowledge source.
+
+### How vault integration works
+
+1. `rebuildVaultIndex` scans the vault and parses frontmatter
+2. graph edges are built from `memento_children` and `[[wikilinks]]`
+3. routable notes are stored in SQLite index tables
+4. `memory_search`, `memory_list`, `memory_get`, and hooks can surface relevant vault notes
+
+### Required root notes
+
+At the root of the vault:
+
+- `me.md`
+- `vault.md`
+
+### Required frontmatter
+
+```yaml
+---
+memento_publish: true
+memento_kind: skill
+memento_summary: One-line summary used by memento-mcp.
+tags:
+  - scheduling
+---
+```
+
+Supported note kinds:
+
+- `identity`
+- `map`
+- `project`
+- `effort`
+- `domain`
+- `decision`
+- `playbook`
+- `skill`
+- `source`
+
+### Vault commands
+
+```bash
+memento-mcp vault-index init
+memento-mcp vault-index rebuild
+memento-mcp vault-index stats
+memento-mcp vault-index doctor
+```
+
+## SQLite vs Obsidian
+
+Use `SQLite` for:
+
+- fast operational memory
+- preferences, facts, pitfalls, short-lived context
+- hook injection state, analytics, budgets, and session tracking
+
+Use `Obsidian` for:
+
+- stable, curated knowledge
+- maps, playbooks, project notes, decisions, skills
+- longer-lived notes you want to keep readable and editable as Markdown
+
+The intersection is:
+
+- vault notes stay as Markdown files
+- `memento-mcp` indexes them into SQLite for routing and retrieval
+- search results can merge SQLite memory and vault knowledge
+
+## Optional Vault Promotion From `memory_store`
+
+`memory_store` always writes to SQLite.
+
+It can now also promote a memory into the vault.
+
+### Explicit promotion
+
+Example:
+
+```text
+memory_store(
+  title="Response preference",
+  content="Prefer concise, truthful answers with enough context.",
+  memory_type="preference",
+  scope="global",
+  persist_to_vault=true
+)
+```
+
+Useful extra parameters:
+
+- `vault_mode="create"` or `vault_mode="create_or_update"`
+- `vault_kind="decision"` to override inferred note kind
+- `vault_folder="40 Decisions/My Area"` to override destination folder
+- `vault_note_title="Preferred Reply Style"` to override the note title
+
+### Auto-promotion by type
+
+You can promote certain memory types automatically:
+
+```toml
+[vault]
+enabled = true
+path = "/path/to/Obsidian"
+auto_promote_types = ["preference", "decision", "pattern", "architecture"]
+```
+
+Behavior:
+
+- if `persist_to_vault=true`, promotion always happens
+- if `persist_to_vault` is omitted, promotion happens when `memory_type` is in `auto_promote_types`
+- if `persist_to_vault=false`, promotion is skipped even if the type is auto-promoted
+
+Current default destination folders:
+
+- `preference` -> `30 Domains/Memento Preferences`
+- `decision` -> `40 Decisions/Memento Decisions`
+- `pattern` -> `50 Playbooks/Memento Patterns`
+- `architecture` -> `30 Domains/Memento Architecture`
+- `fact` -> `30 Domains/Memento Facts`
+- `pitfall` -> `50 Playbooks/Memento Pitfalls`
+
+Promoted notes are marked with:
+
+- `memento_source: memory_store`
+- `memento_memory_id: <sqlite-memory-id>`
+
+This gives idempotent create/update behavior when using `create_or_update`.
 
 ## MCP Tools
 
 | Tool | Description |
 |---|---|
-| `memory_store` | Store a typed memory (fact/decision/preference/pattern/architecture/pitfall), project or global scope |
-| `memory_search` | FTS5 search with `detail="index"` (titles only) or `detail="full"` (with body preview) |
-| `memory_get` | Retrieve complete body of a specific memory by UUID — use after index search |
-| `memory_list` | List memories without a query — filter by type, scope, or pinned status |
-| `memory_delete` | Soft-delete a SQLite memory by ID (file memories are read-only) |
+| `memory_store` | Store a typed memory in SQLite, with optional promotion to the Obsidian vault |
+| `memory_search` | Search ranked SQLite memories and append vault matches when enabled |
+| `memory_get` | Retrieve full body for a SQLite memory or `vault:path/to/note.md` |
+| `memory_list` | List SQLite memories and optionally vault notes by kind or folder |
+| `memory_delete` | Soft-delete a SQLite memory by ID |
 | `decisions_log` | Store, list, or search architectural decisions with category and versioning |
-| `pitfalls_log` | Track recurring problems — auto-increments occurrence count on duplicate titles |
+| `pitfalls_log` | Track recurring problems with occurrence count and dedup |
+| `memory_analytics` | View injection, capture, compression, and memory analytics |
 
 ## Token Optimization
 
-### Smart Hook Skip
-
-Every user prompt is classified before querying the DB:
-
-- **Trivial** (`ok`, `yes`, `done`, short acks, < 8 chars): skip entirely — 0 tokens spent
-- **Standard**: inject up to 3 results
-- **Complex** (> 150 chars, contains code blocks, file paths, or `/commands`): inject up to 5 results, partially refill budget
-
-Custom trivial patterns configurable via `config.toml`.
-
-### Progressive Disclosure
-
-Use `memory_search(query, detail="index")` first to get titles + scores (~30 tokens/result), then `memory_get(id)` only for the results you need (~200–500 tokens each). Avoids loading full bodies for large result sets.
-
-### Adaptive Token Budget
-
-Each session has a token budget (default: 8000). Hook injections debit the budget. When the remaining budget falls below the floor (500), results are capped to 1 (never zero — minimum context always provided). Budget refills partially on complex prompts. Session resets after 30 minutes of idle.
-
-## Comparison with claude-memory (Python)
-
-| Feature | memento-mcp | claude-memory |
-|---|---|---|
-| Language | TypeScript / Node.js | Python |
-| Memory types | 6 typed categories | Untyped |
-| Search | FTS5 ranked + decay scoring | Basic keyword |
-| Decay scoring | 3-tier time-based | None |
-| Decisions log | Versioned with supersedes | None |
-| Pitfalls tracker | Occurrence count + dedup | None |
-| Progressive disclosure | `detail=index` + `memory_get` | None |
-| Smart hook skip | Trivial prompt detection | None |
-| Adaptive budget | Per-session SQLite tracking | None |
-| Migration | DB copy from claude-memory | — |
-
-**Migration from claude-memory:** the installer detects `~/.local/share/claude-memory/context.sqlite` and offers to copy the DB. No data transformation needed — schemas are structurally compatible.
-
-## Native Addon Note
-
-`better-sqlite3` is a native C++ addon. Pre-built binaries are available for Linux x64/arm64, macOS arm64/x64, and Windows x64. Compilation is required only for Alpine Linux (musl), unusual Node versions, or older glibc systems.
-
-If you hit a compilation error:
-
-```bash
-npm install -g node-gyp
-npm install -g @lfrmonteiro99/memento-memory-mcp --build-from-source
-```
-
-## Privacy
-
-Debug logging (`MEMENTO_LOG_LEVEL=debug`) may include prompt keyword fragments used for FTS search. All logs go to stderr only. No data leaves the local machine.
+- **Trivial prompts** can skip injection completely
+- **Progressive disclosure** keeps `memory_search(detail="index")` cheap
+- **Adaptive token budget** reduces context size when a session is near budget exhaustion
 
 ## Development
 
 ```bash
 npm install
-npm test          # vitest — runs all 88 tests
-npm run build     # tsup — outputs dist/
-npm run dev       # tsup --watch
+npm run build
+npm test
 ```
 
-**Test structure:**
+Recommended for local development:
 
+```bash
+source ~/.nvm/nvm.sh
+nvm use 20
 ```
-tests/
-├── db/           # database, memories, decisions, pitfalls, sessions
-├── hooks/        # search-context, session-context integration
-├── lib/          # decay, budget, classify, formatter, config, file-memory, logger
-└── tools/        # memory-tools, decisions-pitfalls MCP tool handlers
+
+## Troubleshooting
+
+### The client does not find `memento-mcp`
+
+Use absolute paths instead of relying on `PATH`:
+
+- absolute `node` binary
+- absolute `dist/cli/main.js`
+
+### Claude hooks do nothing
+
+Check that:
+
+- the hook commands are on `PATH`
+- Claude Code was restarted after editing `settings.json`
+- `memento-hook-search --help` and `memento-hook-session --help` resolve in your shell
+
+### Vault notes are not showing up
+
+Check:
+
+- `[vault].enabled = true`
+- `[vault].path` points to the correct vault
+- notes contain `memento_publish: true`
+- `me.md` and `vault.md` exist
+- `memento-mcp vault-index rebuild` has been run after large vault changes
+
+### Promoted memories are not visible in vault search
+
+Run:
+
+```bash
+memento-mcp vault-index rebuild
+memento-mcp vault-index stats
 ```
+
+### `better-sqlite3` fails to install
+
+If prebuilt binaries are unavailable for your environment, install Node build prerequisites and retry.
+
+## Uninstall
+
+```bash
+memento-mcp uninstall
+```
+
+This removes the registered MCP entry and Claude hooks created by the installer, but keeps your data and config on disk.
 
 ## License
 

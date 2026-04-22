@@ -148,6 +148,7 @@ require_publish_flag = true
 max_hops = 3
 max_results = 5
 hook_max_results = 2
+auto_promote_types = []
 `;
   writeFileSync(configPath, current + block, "utf-8");
 }
@@ -273,6 +274,15 @@ interval_hours = 24
 
 [database]
 path = ""
+
+[vault]
+enabled = false
+path = ""
+require_publish_flag = true
+max_hops = 3
+max_results = 5
+hook_max_results = 2
+auto_promote_types = []
 `
   );
   try {

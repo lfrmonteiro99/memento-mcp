@@ -41,4 +41,16 @@ describe("config", () => {
     const config = loadConfig(cfgPath);
     expect(config.hooks.customTrivialPatterns).toEqual(["roger", "ack"]);
   });
+
+  it("defaultDetail is 'index' in DEFAULT_CONFIG", () => {
+    expect(DEFAULT_CONFIG.search.defaultDetail).toBe("index");
+  });
+
+  it("loads vault auto-promote types from TOML", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    const cfgPath = join(tmpDir, "config.toml");
+    writeFileSync(cfgPath, '[vault]\nauto_promote_types = ["preference", "decision"]\n');
+    const config = loadConfig(cfgPath);
+    expect(config.vault.autoPromoteTypes).toEqual(["preference", "decision"]);
+  });
 });

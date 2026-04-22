@@ -13,6 +13,7 @@ export interface VaultConfig {
   maxHops: number;
   maxResults: number;
   hookMaxResults: number;
+  autoPromoteTypes: string[];
 }
 
 export interface Config {
@@ -34,6 +35,7 @@ export const DEFAULT_VAULT_CONFIG: VaultConfig = {
   maxHops: 3,
   maxResults: 5,
   hookMaxResults: 2,
+  autoPromoteTypes: [],
 };
 
 export const DEFAULT_CONFIG: Config = {
@@ -89,6 +91,7 @@ export function loadConfig(configPath: string): Config {
       if (v.max_hops != null) config.vault.maxHops = Number(v.max_hops);
       if (v.max_results != null) config.vault.maxResults = Number(v.max_results);
       if (v.hook_max_results != null) config.vault.hookMaxResults = Number(v.hook_max_results);
+      if (Array.isArray(v.auto_promote_types)) config.vault.autoPromoteTypes = v.auto_promote_types.map(String);
     }
   } catch {
     // File not found or invalid TOML — use defaults
