@@ -1,7 +1,8 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, chmodSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, chmodSync, renameSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
+import { createInterface } from "node:readline";
 import { getDefaultConfigPath, getDefaultDataDir, getDefaultDbPath } from "../lib/config.js";
 
 function detectClient(): "claude-code" | "cursor" | "manual" {
@@ -87,6 +88,152 @@ function registerHooks(): void {
   mkdirSync(dirname(settingsPath), { recursive: true });
   atomicJsonWrite(settingsPath, settings);
   console.log("  ✓ Hooks registered (SessionStart + UserPromptSubmit)");
+}
+
+function ask(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
+  return new Promise(resolve => rl.question(question, resolve));
+}
+
+// Search common locations for directories containing .obsidian/
+function discoverObsidianVaults(maxDepth = 2): string[] {
+  const roots = [
+    homedir(),
+    join(homedir(), "Documents"),
+    join(homedir(), "Documentos"),
+    join(homedir(), "Desktop"),
+    join(homedir(), "OneDrive"),
+  ];
+  const found: string[] = [];
+
+  function walk(dir: string, depth: number): void {
+    if (depth > maxDepth) return;
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const full = join(dir, e.name);
+      if (e.name === ".obsidian") { found.push(dir); return; }
+      if (depth < maxDepth) walk(full, depth + 1);
+    }
+  }
+
+  for (const root of roots) {
+    if (existsSync(root)) walk(root, 0);
+  }
+  return [...new Set(found)];
+}
+
+function noteCount(vaultPath: string): number {
+  let count = 0;
+  function walk(dir: string): void {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.isDirectory() && e.name !== ".obsidian") walk(join(dir, e.name));
+      else if (e.isFile() && e.name.endsWith(".md")) count++;
+    }
+  }
+  walk(vaultPath);
+  return count;
+}
+
+function appendVaultConfig(configPath: string, vaultPath: string): void {
+  const current = existsSync(configPath) ? readFileSync(configPath, "utf-8") : "";
+  if (current.includes("[vault]")) return;
+  const block = `
+[vault]
+enabled = true
+path = "${vaultPath}"
+require_publish_flag = true
+max_hops = 3
+max_results = 5
+hook_max_results = 2
+`;
+  writeFileSync(configPath, current + block, "utf-8");
+}
+
+async function runVaultWizard(): Promise<void> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  try {
+    const useObsidian = (await ask(rl, "\n  Do you use Obsidian? [y/N] ")).trim().toLowerCase();
+    if (useObsidian !== "y" && useObsidian !== "yes") {
+      console.log("  Vault support skipped. Enable later by editing your config.");
+      return;
+    }
+
+    console.log("\n  Searching for Obsidian vaults...");
+    const vaults = discoverObsidianVaults();
+
+    let chosenPath = "";
+
+    if (vaults.length === 0) {
+      console.log("  No vaults found in common locations.");
+      const manual = (await ask(rl, "  Enter vault path (or press Enter to skip): ")).trim();
+      if (!manual) { console.log("  Vault setup skipped."); return; }
+      chosenPath = manual;
+      if (!existsSync(chosenPath)) {
+        const create = (await ask(rl, `  Path not found. Create folder? [Y/n] `)).trim().toLowerCase();
+        if (create === "n" || create === "no") { console.log("  Vault setup skipped."); return; }
+        mkdirSync(chosenPath, { recursive: true });
+        console.log(`  ✓ Folder created: ${chosenPath}`);
+      }
+    } else if (vaults.length === 1) {
+      const count = noteCount(vaults[0]);
+      const confirm = (await ask(rl, `  Found: ${vaults[0]} (${count} notes). Use this? [Y/n] `)).trim().toLowerCase();
+      if (confirm === "n" || confirm === "no") {
+        const manual = (await ask(rl, "  Enter vault path (or press Enter to skip): ")).trim();
+        if (!manual) { console.log("  Vault setup skipped."); return; }
+        chosenPath = manual;
+      } else {
+        chosenPath = vaults[0];
+      }
+    } else {
+      console.log("  Found:");
+      vaults.forEach((v, i) => console.log(`    ${i + 1}) ${v}  (${noteCount(v)} notes)`));
+      const pick = (await ask(rl, `  Which vault? [1] `)).trim();
+      const idx = pick === "" ? 0 : parseInt(pick, 10) - 1;
+      chosenPath = vaults[idx] ?? vaults[0];
+    }
+
+    console.log(`\n  ✓ Vault path: ${chosenPath}`);
+
+    // Update config
+    appendVaultConfig(getDefaultConfigPath(), chosenPath);
+    console.log("  ✓ Config updated with [vault] section");
+
+    // Scaffold root notes
+    console.log("\n  Checking vault structure...");
+    const { createDatabase } = await import("../db/database.js");
+    const { loadConfig } = await import("../lib/config.js");
+    const config = loadConfig(getDefaultConfigPath());
+    const db = createDatabase(config.database.path || getDefaultDbPath());
+
+    // Inline init (same templates as vault-index init)
+    const ME_MD = `---\nmemento_publish: true\nmemento_kind: identity\nmemento_summary: Edit this line — who you are in one sentence.\n---\n\n# About Me\n\nEdit this file to describe yourself, your working style, and constraints.\n`;
+    const VAULT_MD = `---\nmemento_publish: true\nmemento_kind: map\nmemento_summary: Vault navigation and routing rules.\n---\n\n# Vault Map\n\nThis file describes the vault layout for memento-mcp routing.\n`;
+
+    for (const [name, content] of [["me.md", ME_MD], ["vault.md", VAULT_MD]] as const) {
+      const dest = join(chosenPath, name);
+      if (existsSync(dest)) {
+        console.log(`  ✓ ${name} already exists`);
+      } else {
+        writeFileSync(dest, content, "utf-8");
+        console.log(`  ✓ ${name} created`);
+      }
+    }
+
+    // Index
+    console.log("\n  Indexing vault...");
+    const { rebuildVaultIndex } = await import("../engine/vault-index.js");
+    const stats = rebuildVaultIndex(db, config.vault);
+    console.log(`  ✓ ${stats.total} notes indexed (${stats.routable} routable, ${stats.orphaned} orphaned)`);
+    if (stats.orphaned > 0) console.log("  Run 'memento-mcp vault-index doctor' to review orphaned notes.");
+    db.close();
+
+  } finally {
+    rl.close();
+  }
 }
 
 function createDefaultConfig(): void {
@@ -192,6 +339,9 @@ export async function runInstaller(): Promise<void> {
   } catch (e) {
     console.log(`  ✗ Database error: ${e}`);
   }
+
+  // Vault onboarding wizard
+  await runVaultWizard();
 
   console.log("\n  ✓ Installation complete!\n");
 }

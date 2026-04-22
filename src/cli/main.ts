@@ -58,6 +58,82 @@ if (command === "install") {
     }
     db.close();
 
+  } else if (sub === "init") {
+    const { writeFileSync, existsSync: fsExists } = await import("node:fs");
+    const { join: pathJoin } = await import("node:path");
+
+    const templates: Record<string, string> = {
+      "me.md": `---
+memento_publish: true
+memento_kind: identity
+memento_summary: Edit this line — who you are in one sentence.
+---
+
+# About Me
+
+Edit this file to describe yourself, your working style, and constraints.
+This is the first thing memento-mcp reads to understand who you are.
+
+## Role
+
+
+## Working style
+
+
+## Constraints and preferences
+
+`,
+      "vault.md": `---
+memento_publish: true
+memento_kind: map
+memento_summary: Vault navigation and routing rules.
+memento_children:
+  - 10 Maps
+  - 30 Domains
+  - 50 Playbooks
+  - 55 Skills
+---
+
+# Vault Map
+
+This file describes the vault layout for memento-mcp routing.
+
+## Routable folders
+
+- \`10 Maps\` — navigation and index notes
+- \`20 Projects\` — repo and project-specific context
+- \`30 Domains\` — cross-project topic knowledge
+- \`40 Decisions\` — architectural decisions and rationale
+- \`50 Playbooks\` — human-oriented procedures
+- \`55 Skills\` — machine-oriented repeatable instructions
+
+## Excluded from default retrieval
+
+- \`00 Inbox\` — scratch and unprocessed notes
+- \`15 Calendar\` — daily notes and meetings
+- \`25 Efforts\` — active temporary workstreams
+- \`60 Sources\` — raw material and references
+- \`70 Templates\` — note templates
+- \`90 Archive\` — archived notes
+`,
+    };
+
+    let created = 0;
+    for (const [filename, content] of Object.entries(templates)) {
+      const dest = pathJoin(config.vault.path, filename);
+      if (fsExists(dest)) {
+        console.log(`  ✓ ${filename} already exists — skipped`);
+      } else {
+        writeFileSync(dest, content, "utf-8");
+        console.log(`  ✓ ${filename} created`);
+        created++;
+      }
+    }
+    if (created > 0) {
+      console.log(`\nEdit these files, then run: memento-mcp vault-index rebuild`);
+    }
+    db.close();
+
   } else if (sub === "stats") {
     const { getVaultStats } = await import("../engine/vault-index.js");
     const s = getVaultStats(db, config.vault.path);
