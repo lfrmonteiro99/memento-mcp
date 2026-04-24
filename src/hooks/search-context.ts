@@ -48,7 +48,8 @@ export function processSearchHook(
   });
   if (keywords.length < 2) return "";
 
-  const ftsQuery = buildFtsQueryV2(keywords, true); // N4: prefix matching on by default
+  // N4: prefix matching controlled by config.search.ftsPrefixMatching (default true).
+  const ftsQuery = buildFtsQueryV2(keywords, config.search.ftsPrefixMatching);
 
   // K6: take up to 3x the target count so adaptive re-ranking has enough candidates.
   const dbResults = memRepo.searchV2(ftsQuery, { limit: maxResults * 3 });

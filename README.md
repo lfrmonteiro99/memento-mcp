@@ -403,16 +403,62 @@ This gives idempotent create/update behavior when using `create_or_update`.
 | `memory_search` | Search ranked SQLite memories and append vault matches when enabled |
 | `memory_get` | Retrieve full body for a SQLite memory or `vault:path/to/note.md` |
 | `memory_list` | List SQLite memories and optionally vault notes by kind or folder |
+| `memory_update` | Edit an existing memory (title, content, tags, importance, type, pinned) |
+| `memory_pin` | Pin or unpin a memory so it survives pruning and ranks higher |
 | `memory_delete` | Soft-delete a SQLite memory by ID |
+| `memory_compress` | Manually run the compression pipeline on a project (or all) |
+| `memory_export` | Export memories, decisions, and pitfalls as portable JSON |
+| `memory_import` | Import a JSON dump with `skip` or `overwrite` conflict strategy |
 | `decisions_log` | Store, list, or search architectural decisions with category and versioning |
 | `pitfalls_log` | Track recurring problems with occurrence count and dedup |
 | `memory_analytics` | View injection, capture, compression, and memory analytics |
 
+### Auto-capture via Claude Code hooks
+
+Three hook binaries ship with the package:
+
+- `memento-hook-search` — `UserPromptSubmit` hook that injects the top-N relevant memories
+- `memento-hook-session` — `SessionStart` hook that surfaces pinned/recent memories and active pitfalls
+- `memento-hook-capture` — `PostToolUse` hook that captures `Bash`/`Read`/`Grep`/`Edit` results as memories when they look informative (git log, config files, error output), with classifier-driven dedup, per-session cooldown, and secret scrubbing
+
+Set them up via `memento-mcp install` or add manually to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "memento-hook-search"}]}],
+    "SessionStart":     [{"hooks": [{"type": "command", "command": "memento-hook-session"}]}],
+    "PostToolUse":      [{"hooks": [{"type": "command", "command": "memento-hook-capture"}]}]
+  }
+}
+```
+
+### Analytics, adaptive ranking, and compression
+
+Once the `PostToolUse` hook is installed, `memento-mcp` records every memory injection and tracks whether the LLM's subsequent tool calls reference that memory (filenames, identifiers, explicit IDs). The signal feeds:
+
+- `memory_analytics` — per-project or global report with injection counts, capture rate, compression totals, token savings, and prune recommendations
+- **Adaptive ranking** — `memory_search` blends FTS relevance, importance, exponential decay, and utility score so memories that actually get used rise over time
+- **Automatic importance tuning** — every maintenance pass nudges `importance_score` toward observed utility; pinned memories are left alone
+- **Compression pipeline** — similar recent memories are clustered (Jaccard + trigram + file-path overlap + temporal proximity) and merged into a single summary, with the originals soft-deleted and the merge logged
+
+### File-memory cache
+
+Markdown memory files under `~/.claude/projects/*/memory/` are parsed lazily and cached (TTL + mtime check) to avoid disk reads on every hook invocation. Configure via `[file_memory]`:
+
+```toml
+[file_memory]
+enabled = true
+cache_ttl_seconds = 60
+```
+
 ## Token Optimization
 
 - **Trivial prompts** can skip injection completely
-- **Progressive disclosure** keeps `memory_search(detail="index")` cheap
-- **Adaptive token budget** reduces context size when a session is near budget exhaustion
+- **Progressive disclosure** — `memory_search(detail="index" | "summary" | "full")`
+- **Adaptive token budget** shrinks injection when the session is near budget exhaustion
+- **Compression** folds similar auto-captured memories into one row; originals are soft-deleted but tracked in `compression_log` for audit
+- **VACUUM + WAL checkpoint** run at most once per 24h during maintenance to reclaim disk space from soft-deletes and compressions
 
 ## Development
 

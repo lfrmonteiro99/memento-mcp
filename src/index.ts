@@ -16,7 +16,16 @@ import { handleMemoryDelete } from "./tools/memory-delete.js";
 import { handleDecisionsLog } from "./tools/decisions-log.js";
 import { handlePitfallsLog } from "./tools/pitfalls-log.js";
 import { handleMemoryAnalytics } from "./tools/analytics-tools.js";
+import { handleMemoryCompress } from "./tools/memory-compress.js";
+import { handleMemoryUpdate } from "./tools/memory-update.js";
+import { handleMemoryPin } from "./tools/memory-pin.js";
+import { handleMemoryExport, handleMemoryImport } from "./tools/memory-transfer.js";
 import { AnalyticsTracker, installFlushOnExit } from "./analytics/tracker.js";
+import { cleanupExpiredAnalytics } from "./analytics/retention.js";
+import { runCompressionCycle } from "./engine/compressor.js";
+import { toCompressionConfig } from "./lib/compression-config.js";
+import { configureFileMemoryCache } from "./lib/file-memory.js";
+import { promoteImportanceFromUtility } from "./engine/importance-promoter.js";
 
 const log = createLogger(logLevelFromEnv());
 const config = loadConfig(getDefaultConfigPath());
@@ -25,24 +34,93 @@ const memRepo = new MemoriesRepo(db);
 const decRepo = new DecisionsRepo(db);
 const pitRepo = new PitfallsRepo(db);
 const sessRepo = new SessionsRepo(db);
-const analyticsTracker = new AnalyticsTracker(db, { flushThreshold: 20 });
+const analyticsTracker = new AnalyticsTracker(db, { flushThreshold: config.analytics.flushThreshold });
 const disposeFlush = installFlushOnExit(analyticsTracker);
 
-// Initial prune
-const pruned = memRepo.pruneStale(config.pruning.maxAgeDays, config.pruning.minImportance);
-if (pruned > 0) log.info(`Pruned ${pruned} stale memories`);
+// File-memory cache TTL from config (0 disables caching).
+configureFileMemoryCache(config.fileMemory.enabled ? config.fileMemory.cacheTtlSeconds : 0);
 
-// Pruning interval
+const MIN_VACUUM_INTERVAL_MS = 24 * 60 * 60 * 1000;
+let lastVacuumAt = 0;
+
+function runMaintenance(): void {
+  try {
+    const n = memRepo.pruneStale(config.pruning.maxAgeDays, config.pruning.minImportance);
+    if (n > 0) log.info(`Pruned ${n} stale memories`);
+  } catch (e) {
+    log.warn(`Pruning error: ${e}`);
+  }
+
+  if (config.analytics.enabled && config.analytics.retentionDays > 0) {
+    try {
+      const removed = cleanupExpiredAnalytics(db, config.analytics.retentionDays);
+      if (removed > 0) log.info(`Pruned ${removed} expired analytics events`);
+    } catch (e) {
+      log.warn(`Analytics retention error: ${e}`);
+    }
+  }
+
+  if (config.adaptive.enabled) {
+    try {
+      const result = promoteImportanceFromUtility(db, {
+        minInjections: config.adaptive.minInjectionsForConfidence,
+        neutralUtility: config.adaptive.neutralUtilityScore,
+        maxDelta: 0.05,
+      });
+      if (result.adjusted > 0) {
+        log.info(
+          `Importance re-weighted: ${result.adjusted} memories (${result.promoted} up, ${result.demoted} down)`,
+        );
+      }
+    } catch (e) {
+      log.warn(`Importance promotion error: ${e}`);
+    }
+  }
+
+  // Rotate WAL (cheap, do every maintenance pass)
+  try {
+    db.pragma("wal_checkpoint(TRUNCATE)");
+  } catch (e) {
+    log.warn(`WAL checkpoint error: ${e}`);
+  }
+
+  // Reclaim space (expensive; rate-limited to once per 24h)
+  const now = Date.now();
+  if (now - lastVacuumAt > MIN_VACUUM_INTERVAL_MS) {
+    try {
+      db.exec("VACUUM");
+      lastVacuumAt = now;
+      log.info("Database VACUUM completed");
+    } catch (e) {
+      log.warn(`VACUUM error: ${e}`);
+    }
+  }
+
+  if (config.compression.enabled) {
+    try {
+      const projects = db
+        .prepare("SELECT id FROM projects")
+        .all() as Array<{ id: string }>;
+      const compCfg = toCompressionConfig(config);
+      for (const { id } of projects) {
+        const results = runCompressionCycle(db, id, compCfg);
+        if (results.length > 0) {
+          log.info(`Compressed ${results.length} cluster(s) in project ${id}`);
+        }
+      }
+    } catch (e) {
+      log.warn(`Compression cycle error: ${e}`);
+    }
+  }
+}
+
+// Initial maintenance pass
+runMaintenance();
+
+// Periodic maintenance interval (pruning + retention + compression)
 let pruneTimer: ReturnType<typeof setInterval> | undefined;
 if (config.pruning.enabled) {
-  pruneTimer = setInterval(() => {
-    try {
-      const n = memRepo.pruneStale(config.pruning.maxAgeDays, config.pruning.minImportance);
-      if (n > 0) log.info(`Pruned ${n} stale memories`);
-    } catch (e) {
-      log.warn(`Pruning error: ${e}`);
-    }
-  }, config.pruning.intervalHours * 3_600_000);
+  pruneTimer = setInterval(runMaintenance, config.pruning.intervalHours * 3_600_000);
   // Unref so the interval doesn't keep the process alive on its own
   pruneTimer.unref?.();
 }
@@ -92,7 +170,7 @@ server.tool(
     project_path: z.string().default(""),
     memory_type: z.string().default(""),
     limit: z.number().default(10),
-    detail: z.enum(["index", "full"]).default("full"),
+    detail: z.enum(["index", "summary", "full"]).default("full"),
     include_file_memories: z.boolean().default(true),
   },
   async (params) => ({
@@ -120,7 +198,7 @@ server.tool(
     scope: z.string().default(""),
     pinned_only: z.boolean().default(false),
     limit: z.number().default(20),
-    detail: z.enum(["index", "full"]).default("full"),
+    detail: z.enum(["index", "summary", "full"]).default("full"),
     include_file_memories: z.boolean().default(false),
     vault_kind: z.string().default(""),
     vault_folder: z.string().default(""),
@@ -188,6 +266,69 @@ server.tool(
   },
   async (params) => ({
     content: [{ type: "text" as const, text: await handleMemoryAnalytics(db, params) }],
+  })
+);
+
+server.tool(
+  "memory_update",
+  "Edit an existing memory in place (title, content, tags, importance, memory_type, pinned).",
+  {
+    memory_id: z.string(),
+    title: z.string().optional(),
+    content: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    importance: z.number().optional(),
+    memory_type: z.string().optional(),
+    pinned: z.boolean().optional(),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryUpdate(memRepo, params) }],
+  })
+);
+
+server.tool(
+  "memory_pin",
+  "Pin or unpin a memory so it survives pruning and ranks higher.",
+  {
+    memory_id: z.string(),
+    pinned: z.boolean().default(true),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryPin(memRepo, params) }],
+  })
+);
+
+server.tool(
+  "memory_compress",
+  "Run the compression pipeline now (cluster similar memories and merge them). Omit project_path to compress all projects.",
+  {
+    project_path: z.string().default(""),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryCompress(db, config, params) }],
+  })
+);
+
+server.tool(
+  "memory_export",
+  "Export memories/decisions/pitfalls as portable JSON. Omit project_path to export everything.",
+  {
+    project_path: z.string().default(""),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryExport(db, params) }],
+  })
+);
+
+server.tool(
+  "memory_import",
+  "Import memories from a JSON file produced by memory_export. Strategy 'skip' (default) keeps existing rows; 'overwrite' replaces them.",
+  {
+    path: z.string(),
+    strategy: z.enum(["skip", "overwrite"]).default("skip"),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryImport(db, params) }],
   })
 );
 

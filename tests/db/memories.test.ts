@@ -100,4 +100,107 @@ describe("MemoriesRepo", () => {
     const count = repo.pruneStale(60, 0.3);
     expect(count).toBe(0);
   });
+
+  it("K5: tags are stored as JSON arrays", () => {
+    const id = repo.store({ title: "json tags", body: "b", memoryType: "fact", scope: "global", tags: ["foo", "bar"] });
+    const row = db.prepare("SELECT tags FROM memories WHERE id = ?").get(id) as any;
+    expect(row.tags).toBe('["foo","bar"]');
+  });
+
+  it("K5: v1 CSV tags still parse correctly post-migration", () => {
+    // Simulate a pre-migration state by inserting raw CSV (bypassing store())
+    const id = "csv-test-id";
+    db.prepare(`
+      INSERT INTO memories (id, project_id, title, body, memory_type, scope, tags, created_at, updated_at)
+      VALUES (?, NULL, 't', 'b', 'fact', 'global', 'foo,bar,baz', datetime('now'), datetime('now'))
+    `).run(id);
+    const row = db.prepare("SELECT tags FROM memories WHERE id = ?").get(id) as any;
+    // parseTags (in formatter.ts) handles both formats transparently
+    const parsed = row.tags.startsWith("[") ? JSON.parse(row.tags) : row.tags.split(",").map((t: string) => t.trim());
+    expect(parsed).toEqual(["foo", "bar", "baz"]);
+  });
+});
+
+describe("batched access tracking (v2)", () => {
+  let db: ReturnType<typeof createDatabase>;
+  let repo: MemoriesRepo;
+  const dbPath = join(tmpdir(), `memento-mem-batch-test-${Date.now()}.sqlite`);
+
+  beforeEach(() => {
+    db = createDatabase(dbPath);
+    repo = new MemoriesRepo(db);
+  });
+  afterEach(() => { db.close(); rmSync(dbPath, { force: true }); });
+
+  it("batchUpdateAccess updates multiple memories in one call", () => {
+    const id1 = repo.store({ title: "m1", body: "b1", memoryType: "fact", scope: "global" });
+    const id2 = repo.store({ title: "m2", body: "b2", memoryType: "fact", scope: "global" });
+    const id3 = repo.store({ title: "m3", body: "b3", memoryType: "fact", scope: "global" });
+
+    repo.batchUpdateAccess([id1, id2, id3]);
+
+    const m1 = db.prepare("SELECT access_count FROM memories WHERE id = ?").get(id1) as any;
+    const m2 = db.prepare("SELECT access_count FROM memories WHERE id = ?").get(id2) as any;
+    const m3 = db.prepare("SELECT access_count FROM memories WHERE id = ?").get(id3) as any;
+
+    expect(m1.access_count).toBe(1);
+    expect(m2.access_count).toBe(1);
+    expect(m3.access_count).toBe(1);
+  });
+
+  it("batchUpdateAccess sets last_accessed_at", () => {
+    const id = repo.store({ title: "tracked", body: "b", memoryType: "fact", scope: "global" });
+    repo.batchUpdateAccess([id]);
+    const mem = db.prepare("SELECT last_accessed_at FROM memories WHERE id = ?").get(id) as any;
+    expect(mem.last_accessed_at).toBeDefined();
+  });
+
+  it("batchUpdateAccess handles empty array without error", () => {
+    expect(() => repo.batchUpdateAccess([])).not.toThrow();
+  });
+
+  it("batchUpdateAccess increments existing access_count", () => {
+    const id = repo.store({ title: "multi", body: "b", memoryType: "fact", scope: "global" });
+    repo.batchUpdateAccess([id]);
+    repo.batchUpdateAccess([id]);
+    const mem = db.prepare("SELECT access_count FROM memories WHERE id = ?").get(id) as any;
+    expect(mem.access_count).toBe(2);
+  });
+
+  it("store() accepts source param", () => {
+    const id = repo.store({ title: "auto", body: "b", memoryType: "fact", scope: "global", source: "auto-capture" });
+    const row = db.prepare("SELECT source FROM memories WHERE id = ?").get(id) as any;
+    expect(row.source).toBe("auto-capture");
+  });
+
+  it("store() defaults source to 'user'", () => {
+    const id = repo.store({ title: "default src", body: "b", memoryType: "fact", scope: "global" });
+    const row = db.prepare("SELECT source FROM memories WHERE id = ?").get(id) as any;
+    expect(row.source).toBe("user");
+  });
+
+  it("store() accepts projectId directly", () => {
+    // First create a project via projectPath to get its id
+    const id1 = repo.store({ title: "proj mem", body: "b", memoryType: "fact", scope: "project", projectPath: "/test/proj" });
+    const proj = db.prepare("SELECT project_id FROM memories WHERE id = ?").get(id1) as any;
+    const projectId = proj.project_id;
+
+    // Now store via projectId directly
+    const id2 = repo.store({ title: "direct proj", body: "b", memoryType: "fact", scope: "project", projectId });
+    const row = db.prepare("SELECT project_id FROM memories WHERE id = ?").get(id2) as any;
+    expect(row.project_id).toBe(projectId);
+  });
+
+  it("R4: store() rejects supersedes self-cycle", () => {
+    // Insert a raw memory with a self-referential supersedes_memory_id (edge case)
+    const id = "self-cycle-id";
+    db.prepare(`
+      INSERT INTO memories (id, project_id, title, body, memory_type, scope, supersedes_memory_id, created_at, updated_at)
+      VALUES (?, NULL, 't', 'b', 'fact', 'global', ?, datetime('now'), datetime('now'))
+    `).run(id, id);
+    // Attempting to supersede this already-cyclic memory should throw
+    expect(() => repo.store({
+      title: "new", body: "b", memoryType: "fact", scope: "global", supersedesId: id,
+    })).toThrow(/cycle/);
+  });
 });

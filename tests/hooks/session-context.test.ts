@@ -23,14 +23,14 @@ describe("session-context hook", () => {
     const sessRepo = new SessionsRepo(db);
     memRepo.store({ title: "User is a dev", body: "senior", memoryType: "fact", scope: "global" });
     pitRepo.store("/proj", "FTS5 bug", "ranking issue");
-    const output = processSessionHook(memRepo, pitRepo, sessRepo, DEFAULT_CONFIG);
+    const output = processSessionHook(db, memRepo, pitRepo, sessRepo, DEFAULT_CONFIG);
     expect(output).toContain("User is a dev");
     expect(output).toContain("FTS5 bug");
   });
 
   it("creates a session budget", () => {
     const sessRepo = new SessionsRepo(db);
-    processSessionHook(new MemoriesRepo(db), new PitfallsRepo(db), sessRepo, DEFAULT_CONFIG);
+    processSessionHook(db, new MemoriesRepo(db), new PitfallsRepo(db), sessRepo, DEFAULT_CONFIG);
     const session = sessRepo.getOrCreate(DEFAULT_CONFIG.budget);
     expect(session.spent).toBeGreaterThan(0); // debited for injection
   });

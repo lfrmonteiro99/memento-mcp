@@ -1,7 +1,8 @@
 // src/lib/file-memory.ts
-import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { FileMemoryCache } from "../engine/file-memory-cache.js";
 
 const DEFAULT_CLAUDE_PROJECTS = join(homedir(), ".claude", "projects");
 
@@ -21,30 +22,30 @@ interface FileMemory {
   score?: number;
 }
 
-function parseMemoryFile(filepath: string): FileMemory | null {
-  try {
-    const content = readFileSync(filepath, "utf-8");
-    const basename = filepath.split("/").pop()?.replace(".md", "") ?? "unknown";
-    let title = basename;
-    let description = "";
-    let memoryType = "fact";
-    let body = content;
+// Module-level cache singleton. TTL defaults to 60s; server configures it at
+// startup via configureFileMemoryCache() so the user-facing file_memory.cache_ttl_seconds
+// TOML key flows through.
+let cache = new FileMemoryCache(60_000);
 
-    const match = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)/);
-    if (match) {
-      const [, frontmatter, rest] = match;
-      body = rest;
-      for (const line of frontmatter.split("\n")) {
-        if (line.startsWith("name:")) title = line.slice(5).trim();
-        else if (line.startsWith("description:")) description = line.slice(12).trim();
-        else if (line.startsWith("type:")) memoryType = line.slice(5).trim();
-      }
-    }
+export function configureFileMemoryCache(ttlSeconds: number): void {
+  cache = new FileMemoryCache(Math.max(0, ttlSeconds) * 1000);
+}
 
-    return { id: `file:${filepath}`, title, description, body: body.trim(), memory_type: memoryType, scope: "project", source: "file", filepath };
-  } catch {
-    return null;
-  }
+export function clearFileMemoryCache(): void {
+  cache.clear();
+}
+
+function toFileMemory(parsed: { title: string; description: string; body: string; memory_type: string; filepath: string }): FileMemory {
+  return {
+    id: `file:${parsed.filepath}`,
+    title: parsed.title,
+    description: parsed.description,
+    body: parsed.body,
+    memory_type: parsed.memory_type,
+    scope: "project",
+    source: "file",
+    filepath: parsed.filepath,
+  };
 }
 
 export function readFileMemories(projectPath?: string, claudeProjectsDir?: string): FileMemory[] {
@@ -69,15 +70,19 @@ export function readFileMemories(projectPath?: string, claudeProjectsDir?: strin
     } catch { /* ignore */ }
   }
 
+  const paths: string[] = [];
   for (const dir of dirs) {
     try {
       for (const file of readdirSync(dir)) {
         if (file.endsWith(".md") && file !== "MEMORY.md") {
-          const parsed = parseMemoryFile(join(dir, file));
-          if (parsed) results.push(parsed);
+          paths.push(join(dir, file));
         }
       }
     } catch { /* ignore */ }
+  }
+
+  for (const parsed of cache.getFileMemories(paths)) {
+    results.push(toFileMemory(parsed));
   }
 
   return results;

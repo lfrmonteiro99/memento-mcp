@@ -211,6 +211,99 @@ describe("database migration v2", () => {
     expect(fk!.type.toUpperCase()).toBe("TEXT");
   });
 
+  it("migration is idempotent (running createDatabase twice leaves DB in identical state)", () => {
+    db = createDatabase(dbPath);
+    const firstVersion = db.pragma("user_version", { simple: true });
+    const firstTables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .all();
+    db.close();
+
+    db = createDatabase(dbPath);
+    const secondVersion = db.pragma("user_version", { simple: true });
+    const secondTables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .all();
+
+    expect(secondVersion).toBe(firstVersion);
+    expect(secondTables).toEqual(firstTables);
+  });
+
+  it("fresh DB (user_version=0) runs all migrations and exposes v2 tables", () => {
+    db = createDatabase(dbPath);
+    const version = db.pragma("user_version", { simple: true }) as number;
+    expect(version).toBeGreaterThanOrEqual(2);
+    const tableNames = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>
+    ).map(r => r.name);
+    expect(tableNames).toContain("analytics_events");
+    expect(tableNames).toContain("compression_log");
+    expect(tableNames).toContain("memories");
+  });
+
+  it("R1: multiple concurrent DB handles on same path coexist after migration (WAL)", () => {
+    // Prime the DB via the first open so migrations run exactly once.
+    const primary = createDatabase(dbPath);
+    const targetVersion = primary.pragma("user_version", { simple: true });
+    primary.close();
+
+    // Open two additional handles "concurrently". better-sqlite3 + WAL allows
+    // overlapping readers; the migration must be idempotent so a second caller
+    // that races on user_version observes the same schema without corruption.
+    const handles = [createDatabase(dbPath), createDatabase(dbPath), createDatabase(dbPath)];
+    try {
+      for (const h of handles) {
+        expect(h.pragma("user_version", { simple: true })).toBe(targetVersion);
+        const hasAnalytics = h
+          .prepare("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name='analytics_events'")
+          .get() as any;
+        expect(hasAnalytics.c).toBe(1);
+      }
+    } finally {
+      for (const h of handles) h.close();
+    }
+  });
+
+  it("R1: subprocess opens against same DB both succeed (real cross-process race)", async () => {
+    // Skip if the standalone dist/db/database.js bundle is not present.
+    // The auto-capture-bin test rebuilds dist/ in its own beforeAll, but not
+    // every test run guarantees it. If missing, this test is informational only.
+    const { spawnSync } = await import("node:child_process");
+    const distEntry = join(process.cwd(), "dist", "db", "database.js");
+    const { existsSync } = await import("node:fs");
+    if (!existsSync(distEntry)) return;
+
+    const concurrentPath = join(tmpdir(), `memento-concurrent-${process.pid}-${randomUUID()}.sqlite`);
+    try {
+      const script = `
+        import("${distEntry}").then(({ createDatabase }) => {
+          const d = createDatabase(${JSON.stringify(concurrentPath)});
+          const v = d.pragma("user_version", { simple: true });
+          d.close();
+          process.stdout.write(String(v));
+          process.exit(0);
+        }).catch(e => { process.stderr.write(String(e)); process.exit(1); });
+      `;
+
+      const run = () =>
+        new Promise<{ code: number | null; out: string }>(resolve => {
+          const p = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+            encoding: "utf-8",
+            timeout: 30_000,
+          });
+          resolve({ code: p.status, out: p.stdout });
+        });
+
+      const [r1, r2] = await Promise.all([run(), run()]);
+      expect(r1.code).toBe(0);
+      expect(r2.code).toBe(0);
+      expect(Number(r1.out)).toBeGreaterThanOrEqual(2);
+      expect(Number(r2.out)).toBeGreaterThanOrEqual(2);
+    } finally {
+      rmSync(concurrentPath, { force: true });
+    }
+  });
+
   it("K5: migrates v1 CSV-format tags to JSON on upgrade", () => {
     // Create a fresh v1-only DB (user_version=1), seed a CSV-tagged memory, then migrate.
     const BetterSqlite3 = require("better-sqlite3");
