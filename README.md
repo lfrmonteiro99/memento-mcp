@@ -217,34 +217,89 @@ Config file:
 - Linux/macOS: `~/.config/memento-mcp/config.toml`
 - Windows: `%APPDATA%/memento-mcp/config.toml`
 
-Example:
+Every section is optional. Missing sections and keys fall back to the defaults shown below. A v1 config (only `[budget]` / `[search]` / `[hooks]` / `[pruning]`) continues to parse — the new v2 sections just use defaults.
+
+Full example with every key:
 
 ```toml
 [budget]
-total = 8000
-floor = 500
-refill = 200
+total = 8000             # max tokens per session
+floor = 500              # stop injection when remaining < floor
+refill = 200             # top-up applied on "complex" prompts
 session_timeout = 1800
 
 [search]
-default_detail = "full"
+default_detail = "index"         # "index" | "summary" | "full"
 max_results = 10
 body_preview_chars = 200
+keyword_max_tokens = 8           # v2 — max keywords extracted per query
+preserve_phrases = true          # v2 — bigram phrase boosting in FTS
+fts_prefix_matching = true       # v2 / N4 — single terms become prefix matches
 
 [hooks]
 trivial_skip = true
 session_start_memories = 5
 session_start_pitfalls = 5
 custom_trivial_patterns = []
+analytics_reminder_interval_sessions = 20   # v2 / G6 — remind LLM to run memory_analytics every N sessions
 
 [pruning]
 enabled = true
 max_age_days = 60
 min_importance = 0.3
-interval_hours = 24
+interval_hours = 24              # maintenance cadence (also drives compression + retention + VACUUM)
 
 [database]
-path = ""
+path = ""                        # empty = default (~/.local/share/memento-mcp/memento.sqlite)
+
+[decay]
+type = "exponential"             # "exponential" | "step"
+half_life_days = 14
+
+[auto_capture]
+enabled = true
+min_output_length = 200          # skip tool outputs shorter than this
+max_output_length = 50000        # skip tool outputs larger than this
+cooldown_seconds = 30            # min gap between captures for the same tool+key
+dedup_similarity_threshold = 0.7 # Jaccard threshold that counts as a duplicate
+max_per_session = 20
+default_importance = 0.3
+tools = ["Bash", "Read", "Grep", "Edit"]
+session_timeout_seconds = 3600   # TTL for per-session cooldown trackers
+
+[compression]
+enabled = true
+memory_count_threshold = 150     # trigger compression when project has more active memories
+auto_capture_batch_threshold = 50 # or when > N auto-captured in the last 24h
+staleness_days = 7
+cluster_similarity_threshold = 0.45
+min_cluster_size = 2
+max_body_ratio = 0.6             # compressed body budget = max_body_ratio * sum(cluster tokens)
+temporal_window_hours = 48
+
+[adaptive]
+enabled = true
+utility_window_minutes = 10      # how long an injection stays "open" to collect utility signals
+decay_half_life_days = 14
+min_injections_for_confidence = 5
+neutral_utility_score = 0.5
+
+[adaptive.score_weights]         # must sum to ~1.0
+fts_relevance = 0.30
+importance = 0.20
+decay = 0.15
+utility = 0.25
+recency_bonus = 0.10
+
+[analytics]
+enabled = true
+flush_threshold = 20             # buffered events flushed when N is reached
+retention_days = 90              # analytics_events rows older than this are pruned
+prune_check_interval = 24
+
+[file_memory]
+enabled = true
+cache_ttl_seconds = 60           # TTL for parsed ~/.claude/projects/*/memory/*.md files
 
 [vault]
 enabled = false
@@ -258,11 +313,15 @@ auto_promote_types = []
 
 Environment variable overrides:
 
-- `MEMENTO_BUDGET`
-- `MEMENTO_FLOOR`
-- `MEMENTO_REFILL`
-- `MEMENTO_SESSION_TIMEOUT`
-- `MEMENTO_LOG_LEVEL`
+| Variable | Effect |
+|---|---|
+| `MEMENTO_BUDGET` | Overrides `budget.total` |
+| `MEMENTO_FLOOR` | Overrides `budget.floor` |
+| `MEMENTO_REFILL` | Overrides `budget.refill` |
+| `MEMENTO_SESSION_TIMEOUT` | Overrides `budget.session_timeout` |
+| `MEMENTO_LOG_LEVEL` | `error` / `warn` (default) / `info` / `debug` — routed to stderr |
+
+Malformed TOML is **not** silently ignored. The server logs a `WARN` to stderr and falls back to defaults (see `MEMENTO_LOG_LEVEL`).
 
 ## Vault Integration
 
@@ -413,6 +472,207 @@ This gives idempotent create/update behavior when using `create_or_update`.
 | `pitfalls_log` | Track recurring problems with occurrence count and dedup |
 | `memory_analytics` | View injection, capture, compression, and memory analytics |
 
+### Tool parameters
+
+<details>
+<summary><code>memory_store</code></summary>
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `title` | string | — | required |
+| `content` | string | — | required; stored in `body` |
+| `memory_type` | string | `"fact"` | `fact` / `decision` / `preference` / `pattern` / `architecture` / `pitfall` |
+| `scope` | string | `"project"` | `"project"` or `"global"` |
+| `project_path` | string | `""` | project root; resolved to `project_id` |
+| `tags` | string[] | `[]` | stored as JSON |
+| `importance` | number | `0.5` | clamped to [0, 1] |
+| `supersedes_id` | string | `""` | marks that memory deleted; cycle-guarded (R4) |
+| `pin` | bool | `false` | |
+| `persist_to_vault` | bool | auto-type | see Vault Promotion |
+| `vault_mode` | string | `"create_or_update"` | |
+| `vault_kind`, `vault_folder`, `vault_note_title` | string | `""` | vault overrides |
+
+</details>
+
+<details>
+<summary><code>memory_search</code></summary>
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `query` | string | — | required |
+| `project_path` | string | `""` | scope to a project (still includes globals) |
+| `memory_type` | string | `""` | filter by type |
+| `limit` | number | `10` | |
+| `detail` | enum | `"full"` | `"index"` / `"summary"` / `"full"` — progressive disclosure |
+| `include_file_memories` | bool | `true` | merge `~/.claude/projects/*/memory/*.md` results |
+
+</details>
+
+<details>
+<summary><code>memory_get</code></summary>
+
+| Param | Type | Notes |
+|---|---|---|
+| `memory_id` | string | SQLite UUID, `file:<path>`, or `vault:<relative/path>` |
+
+</details>
+
+<details>
+<summary><code>memory_list</code></summary>
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `project_path` | string | `""` | |
+| `memory_type` | string | `""` | |
+| `scope` | string | `""` | |
+| `pinned_only` | bool | `false` | |
+| `limit` | number | `20` | |
+| `detail` | enum | `"full"` | `index` / `summary` / `full` |
+| `include_file_memories` | bool | `false` | |
+| `vault_kind` | string | `""` | filter vault notes by kind |
+| `vault_folder` | string | `""` | filter vault notes by folder |
+
+</details>
+
+<details>
+<summary><code>memory_update</code></summary>
+
+Patch-style update. Omitted fields are left untouched. At least one field (other than `memory_id`) is required.
+
+| Param | Type | Notes |
+|---|---|---|
+| `memory_id` | string | required |
+| `title` | string | |
+| `content` | string | updates `body` |
+| `tags` | string[] | replaces entire tag list (stored as JSON) |
+| `importance` | number | clamped to [0, 1] |
+| `memory_type` | string | |
+| `pinned` | bool | |
+
+Bumps `updated_at`. Rejects updates on soft-deleted memories with "not found".
+
+</details>
+
+<details>
+<summary><code>memory_pin</code></summary>
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `memory_id` | string | — | required |
+| `pinned` | bool | `true` | pass `false` to unpin |
+
+Pinned memories are skipped by pruning, the importance auto-promoter, and stay on top of `memory_list(pinned_only=true)`.
+
+</details>
+
+<details>
+<summary><code>memory_delete</code></summary>
+
+| Param | Type | Notes |
+|---|---|---|
+| `memory_id` | string | soft-delete; row is filtered from all reads, but preserved for audit |
+
+</details>
+
+<details>
+<summary><code>memory_compress</code></summary>
+
+Manual trigger of the compression pipeline.
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `project_path` | string | `""` | empty → every registered project |
+
+Returns a summary: cluster count, token totals, and per-project breakdown. Returns `"No clusters found to compress."` if nothing is similar enough. Honors `compression.enabled = false`.
+
+</details>
+
+<details>
+<summary><code>memory_export</code></summary>
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `project_path` | string | `""` | empty → export everything; otherwise include globals + that project's memories/decisions/pitfalls |
+
+Output is JSON:
+
+```json
+{
+  "schema_version": 2,
+  "exported_at": "2026-04-24T15:00:00Z",
+  "projects":  [...],
+  "memories":  [...],
+  "decisions": [...],
+  "pitfalls":  [...]
+}
+```
+
+Redirect to file via your MCP client's output capture (or call from another script and save stdout).
+
+</details>
+
+<details>
+<summary><code>memory_import</code></summary>
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `path` | string | — | required; path to JSON produced by `memory_export` |
+| `strategy` | enum | `"skip"` | `"skip"` keeps existing rows on id conflict; `"overwrite"` replaces them |
+
+Transactional (all-or-nothing). Rejects incompatible `schema_version` with a clear error. Returns counts of imported / skipped / overwritten rows.
+
+</details>
+
+<details>
+<summary><code>decisions_log</code></summary>
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `action` | string | — | `"store"` / `"list"` / `"search"` |
+| `project_path` | string | — | required |
+| `title`, `body`, `category` | string | — | `action="store"` |
+| `importance` | number | `0.7` | |
+| `supersedes_id` | string | `""` | |
+| `query` | string | `""` | `action="search"` |
+| `limit` | number | `10` | |
+
+</details>
+
+<details>
+<summary><code>pitfalls_log</code></summary>
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `action` | string | — | `"store"` / `"list"` / `"resolve"` |
+| `project_path` | string | — | required |
+| `title`, `body` | string | — | `action="store"` |
+| `importance` | number | `0.6` | |
+| `limit` | number | `10` | |
+| `include_resolved` | bool | `false` | |
+| `pitfall_id` | string | `""` | `action="resolve"` |
+
+</details>
+
+<details>
+<summary><code>memory_analytics</code></summary>
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `period` | enum | `"last_7d"` | `"last_24h"` / `"last_7d"` / `"last_30d"` / `"all"` |
+| `section` | enum | `"all"` | `"all"` / `"injections"` / `"captures"` / `"compression"` / `"memories"` |
+| `project_path` | string | `""` | empty or `"global"` → aggregate across all projects |
+
+Output sections:
+- **injections** — sessions, total tokens, avg tokens/session
+- **captures** — auto-capture count, skip count, capture rate
+- **compression** — runs, tokens_before → tokens_after, tokens saved, avg ratio
+- **memories** — active vs deleted counts, breakdown by type
+- **prune recommendations** — auto-generated "delete" / "archive" suggestions based on usage signal
+
+Footer notes when tracking began, or warns when no events have been recorded yet (e.g., immediately after v2 upgrade).
+
+</details>
+
 ### Auto-capture via Claude Code hooks
 
 Three hook binaries ship with the package:
@@ -433,24 +693,83 @@ Set them up via `memento-mcp install` or add manually to `~/.claude/settings.jso
 }
 ```
 
-### Analytics, adaptive ranking, and compression
+### Auto-capture rules
 
-Once the `PostToolUse` hook is installed, `memento-mcp` records every memory injection and tracks whether the LLM's subsequent tool calls reference that memory (filenames, identifiers, explicit IDs). The signal feeds:
+`memento-hook-capture` runs after matching tool calls and decides per-call whether to store something:
 
-- `memory_analytics` — per-project or global report with injection counts, capture rate, compression totals, token savings, and prune recommendations
-- **Adaptive ranking** — `memory_search` blends FTS relevance, importance, exponential decay, and utility score so memories that actually get used rise over time
-- **Automatic importance tuning** — every maintenance pass nudges `importance_score` toward observed utility; pinned memories are left alone
-- **Compression pipeline** — similar recent memories are clustered (Jaccard + trigram + file-path overlap + temporal proximity) and merged into a single summary, with the originals soft-deleted and the merge logged
+- **Bash** — captures `git log` / `git diff` / `git status` output, build/test failures (pitfall type), and any stdout between `min_output_length` and `max_output_length`
+- **Read** — captures config-file reads (`*.toml`, `*.yaml`, `*.json`, `Dockerfile`, …) as `architecture` memories; source-code reads are skipped
+- **Grep** — captures pattern results when match count is in [3, 50]; trivially-narrow or repo-wide matches are skipped
+- **Edit** — captures significant changes (multi-line or more than a trivial rename)
+
+Always skipped:
+- outputs shorter than `auto_capture.min_output_length` or larger than `auto_capture.max_output_length`
+- tools not in `auto_capture.tools`
+- rapid-fire duplicates (same tool + key within `cooldown_seconds`)
+- body that matches a recent memory at Jaccard similarity ≥ `dedup_similarity_threshold` (project-scoped)
+- sessions that already hit `max_per_session`
+
+**Secret scrubbing** — before classification, the raw text is passed through `scrubSecrets`. Redacted patterns:
+- `api_key` / `password` / `secret` / `token` assignments (any casing)
+- Common provider env assignments: `AWS_*=`, `GITHUB_*=`, `OPENAI_*=`, etc.
+- PEM private-key blocks (`-----BEGIN ... PRIVATE KEY-----`)
+
+### Utility signals and adaptive ranking
+
+Once a memory is injected, `memento-hook-capture` watches the next tool calls in that session (within `adaptive.utility_window_minutes`) to decide whether the memory was *actually useful*:
+
+- **`explicit_access`** — the memory's id or title shows up in a subsequent `memory_get` / `memory_search` response. Strength `1.0`.
+- **`tool_reference`** — a fingerprint of the memory (file path, PascalCase / camelCase identifier ≥ 5 chars) appears in a subsequent tool input or response. Strength `0.8` if the match is ≥ 20 chars, else `0.5`.
+- **`ignored`** — the injection window expired without any match.
+
+These land in `analytics_events` and feed two things:
+
+1. **`computeUtilityScore(db, memory_id)`** — mixed ratio of *used* vs *injected* plus average signal strength, weighted by a confidence factor (N/5 capped at 1). Neutral `0.5` for memories with no injection history.
+2. **Adaptive score** used by `memory_search` and `SessionStart`:
+
+   ```
+   score = fts_relevance * 0.30
+         + importance    * 0.20
+         + decay         * 0.15   // computeExponentialDecay(daysSince(last_accessed_at), half_life=14)
+         + utility       * 0.25
+         + recency_bonus * 0.10
+   ```
+
+   Weights are tunable via `[adaptive.score_weights]`.
+
+The adaptive ranker also drives **automatic importance tuning**: every maintenance pass takes memories with ≥ `min_injections_for_confidence` injections and nudges their `importance_score` toward the observed utility (delta = `(utility - neutral_utility_score) * 0.2`, clamped to ±0.05 per pass). Pinned memories are skipped — user intent wins.
+
+### Compression pipeline
+
+Compression folds clusters of similar recent memories into one summary row. Triggered when any of:
+- active memory count for a project exceeds `compression.memory_count_threshold`
+- auto-captured memories in the last 24h exceed `compression.auto_capture_batch_threshold`
+
+Pipeline (all inside one `db.transaction()` for R5 atomicity):
+
+1. **Select candidates** — newest 200 active memories per project (excludes `source='compression'` to prevent re-compression).
+2. **Cluster** — Union-Find single-linkage on pairwise similarity. The combined score is `tag_jaccard * 0.25 + title_trigram * 0.30 + file_path_jaccard * 0.30 + temporal_proximity * 0.15`. Clusters with size < `min_cluster_size` are discarded.
+3. **Merge** — each cluster is collapsed into one memory: sentence dedup across the cluster (Jaccard > 0.6), token budget = `sum(cluster_tokens) * max_body_ratio`, importance = `max(sources) + 0.1` (capped at 1), dominant `memory_type` wins, `tags` includes `"compressed"`.
+4. **Store** — the new row is inserted with `source='compression'`, the merge is audited in `compression_log` (FK is TEXT UUID — R6, safe under VACUUM), and source memories are soft-deleted.
+
+Run manually with `memory_compress`; otherwise runs as part of the maintenance cycle.
+
+### Maintenance cycle
+
+On server startup and every `pruning.interval_hours`, the server runs:
+
+1. **Prune stale memories** — `pruneStale(max_age_days, min_importance)` soft-deletes unpinned low-importance rows not accessed for `max_age_days`.
+2. **Analytics retention** — `cleanupExpiredAnalytics(retention_days)` deletes `analytics_events` rows older than the cutoff.
+3. **Importance auto-promote** — nudges unpinned memories' `importance_score` toward observed utility (see above).
+4. **WAL checkpoint** — `PRAGMA wal_checkpoint(TRUNCATE)` rotates the WAL so it doesn't grow unboundedly between restarts.
+5. **VACUUM** — rate-limited to once per 24h; reclaims disk space freed by soft-deletes and compression.
+6. **Compression** — `runCompressionCycle` per project (if `compression.enabled`).
+
+Each step is independently wrapped in try/catch so a failure in one doesn't abort the rest.
 
 ### File-memory cache
 
-Markdown memory files under `~/.claude/projects/*/memory/` are parsed lazily and cached (TTL + mtime check) to avoid disk reads on every hook invocation. Configure via `[file_memory]`:
-
-```toml
-[file_memory]
-enabled = true
-cache_ttl_seconds = 60
-```
+Markdown memory files under `~/.claude/projects/*/memory/` (legacy file memories) are parsed lazily and cached (TTL + mtime check) to avoid disk reads on every hook invocation. Configure via `[file_memory]` (see the config example above).
 
 ## Token Optimization
 
@@ -459,6 +778,32 @@ cache_ttl_seconds = 60
 - **Adaptive token budget** shrinks injection when the session is near budget exhaustion
 - **Compression** folds similar auto-captured memories into one row; originals are soft-deleted but tracked in `compression_log` for audit
 - **VACUUM + WAL checkpoint** run at most once per 24h during maintenance to reclaim disk space from soft-deletes and compressions
+
+## Upgrading from v1 to v2
+
+The v2 upgrade is designed to be drop-in:
+
+1. `npm install -g @lfrmonteiro99/memento-memory-mcp@2.0.0` — the bin names preserved from v1 (`memento-mcp`, `memento-hook-search`, `memento-hook-session`) continue to work. v2 adds one new binary: `memento-hook-capture`.
+2. The SQLite migration runs automatically on the first open:
+   - New tables: `analytics_events`, `compression_log`, and `vault_*` (if you haven't built a vault yet, these stay empty).
+   - New columns on `memories`: `source` (default `"user"`), `adaptive_score` (default `0.5`).
+   - v1 tags stored as CSV strings (`"foo,bar,baz"`) are auto-converted to JSON arrays (`["foo","bar","baz"]`). Reads tolerate both forms during the transition.
+   - Migration is idempotent and wrapped in a transaction — failed migrations roll back cleanly.
+3. v1 config files continue to parse. New v2 sections (`[auto_capture]`, `[compression]`, `[adaptive]`, `[analytics]`, `[file_memory]`, `[decay]`) are optional and default to the values shown in the config example.
+4. Add the `PostToolUse` hook if you want auto-capture (see Claude Code setup above). This is what feeds `analytics_events` — skip it and `memory_analytics` will still work but show neutral utility scores.
+5. One behavioral change: `search.default_detail` in `DEFAULT_CONFIG` is now `"index"` (was `"full"`). Override with `default_detail = "full"` if you want the v1 behavior. Callers passing `detail="full"` explicitly are unaffected.
+
+Verifying the upgrade:
+
+```bash
+# Schema is at least v2:
+node -e "const D=require('better-sqlite3');const d=new D(process.env.HOME+'/.local/share/memento-mcp/memento.sqlite',{readonly:true});console.log(d.pragma('user_version',{simple:true}));d.close()"
+
+# v2 tables exist:
+node -e "const D=require('better-sqlite3');const d=new D(process.env.HOME+'/.local/share/memento-mcp/memento.sqlite',{readonly:true});console.log(d.prepare(\"SELECT name FROM sqlite_master WHERE name IN ('analytics_events','compression_log')\").all());d.close()"
+```
+
+The server never deletes pre-existing v1 memories. To wipe and start fresh, delete the SQLite file — it will be recreated on next boot.
 
 ## Development
 
