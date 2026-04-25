@@ -8,7 +8,7 @@
 
 ### Persistent memory for AI coding agents.
 
-A local-first MCP server that gives **Claude Code**, **Codex**, **Cursor**, and any stdio-MCP client durable project memory: facts, decisions, patterns, architecture notes, pitfalls, session summaries, and team-shared knowledge — while cutting **thousands of tokens of repeated context** out of every single session.
+A local-first MCP server that gives **Claude Code**, **Codex**, **Cursor**, and any stdio-MCP client durable project memory: facts, decisions, patterns, architecture notes, pitfalls, session summaries, and team-shared knowledge — retrieved on demand instead of pasted into every new chat.
 
 <br />
 
@@ -25,7 +25,7 @@ A local-first MCP server that gives **Claude Code**, **Codex**, **Cursor**, and 
 > [!NOTE]
 > AI coding agents are powerful, but they forget. They forget why a decision was made, which migration broke production, which convention your project follows, and which workaround saved you three hours last week.
 >
-> **`memento-mcp` fixes that — and stops your agent burning thousands of tokens re-reading the same context every session.**
+> **`memento-mcp` fixes the forgetting — and the token bleed that comes with it.**
 
 It stores structured memories locally in SQLite, retrieves the right context when your agent needs it, and can sync selected team memories through git. No hosted vector database. No mandatory cloud account. No mystery SaaS quietly eating your project history.
 
