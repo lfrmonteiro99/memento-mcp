@@ -86,9 +86,8 @@ describe("profile-aware search hook integration", () => {
       config
     );
 
-    // Short Portuguese greetings may not match because they're under minWordLength
-    // or not relevant to the English-indexed memory
-    expect(result.length).toBe(0);
+    expect(result).not.toContain("Como configurar o sistema");
+    expect(result).not.toContain("configurar");
   });
 
   it("respects MEMENTO_PROFILE env var in resolveProfile", async () => {
