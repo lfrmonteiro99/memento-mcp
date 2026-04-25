@@ -51,6 +51,10 @@ export interface Config {
     sessionStartPitfalls: number;
     customTrivialPatterns: string[];
     analyticsReminderIntervalSessions: number;
+    sessionEndSummarize: boolean;
+    sessionEndMinCaptures: number;
+    sessionEndMaxBodyTokens: number;
+    sessionEndKeepOriginals: boolean;
   };
   pruning: { enabled: boolean; maxAgeDays: number; minImportance: number; intervalHours: number };
   database: { path: string };
@@ -144,6 +148,10 @@ export const DEFAULT_CONFIG: Config = {
     sessionStartPitfalls: 5,
     customTrivialPatterns: [],
     analyticsReminderIntervalSessions: 20,
+    sessionEndSummarize: true,
+    sessionEndMinCaptures: 2,
+    sessionEndMaxBodyTokens: 1500,
+    sessionEndKeepOriginals: false,
   },
   pruning: { enabled: true, maxAgeDays: 60, minImportance: 0.3, intervalHours: 24 },
   database: { path: "" },
@@ -258,6 +266,10 @@ export function loadConfig(configPath: string): Config {
     if (toml.hooks.analytics_reminder_interval_sessions != null) {
       config.hooks.analyticsReminderIntervalSessions = Number(toml.hooks.analytics_reminder_interval_sessions);
     }
+    if (toml.hooks.session_end_summarize != null) config.hooks.sessionEndSummarize = Boolean(toml.hooks.session_end_summarize);
+    if (toml.hooks.session_end_min_captures != null) config.hooks.sessionEndMinCaptures = Number(toml.hooks.session_end_min_captures);
+    if (toml.hooks.session_end_max_body_tokens != null) config.hooks.sessionEndMaxBodyTokens = Number(toml.hooks.session_end_max_body_tokens);
+    if (toml.hooks.session_end_keep_originals != null) config.hooks.sessionEndKeepOriginals = Boolean(toml.hooks.session_end_keep_originals);
   }
   if (toml.pruning) {
     if (toml.pruning.enabled != null) config.pruning.enabled = Boolean(toml.pruning.enabled);

@@ -47,10 +47,10 @@ describe("database migration v2", () => {
     expect(col!.dflt_value).toContain("0.5");
   });
 
-  it("sets schema version to 4", () => {
+  it("sets schema version to 5", () => {
     db = createDatabase(dbPath);
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(4);
+    expect(version).toBe(5);
   });
 
   it("is idempotent - running createDatabase twice does not error", () => {
@@ -58,7 +58,7 @@ describe("database migration v2", () => {
     db.close();
     db = createDatabase(dbPath);
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(4);
+    expect(version).toBe(5);
   });
 
   it("migrates existing v1 database without data loss", () => {
@@ -302,6 +302,17 @@ describe("database migration v2", () => {
     } finally {
       rmSync(concurrentPath, { force: true });
     }
+  });
+
+  it("v5: adds claude_session_id to sessions and memories", () => {
+    db = createDatabase(dbPath);
+    const sessionCols = (db.pragma("table_info(sessions)") as Array<{ name: string }>).map(c => c.name);
+    expect(sessionCols).toContain("claude_session_id");
+    const memoryCols = (db.pragma("table_info(memories)") as Array<{ name: string }>).map(c => c.name);
+    expect(memoryCols).toContain("claude_session_id");
+    // Index should exist
+    const indexes = (db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_memories_claude_session'").all() as any[]);
+    expect(indexes.length).toBe(1);
   });
 
   it("K5: migrates v1 CSV-format tags to JSON on upgrade", () => {

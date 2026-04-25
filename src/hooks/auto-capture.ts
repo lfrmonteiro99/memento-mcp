@@ -26,6 +26,7 @@ export interface AutoCaptureInput {
   tool_response_text: string;
   session_id: string;
   project_id?: string; // I3: passed to isDuplicate for project-scoped dedup
+  claude_session_id?: string; // Issue #3: Claude Code session ID for linking memories to sessions
 }
 
 export interface AutoCaptureResult {
@@ -139,6 +140,7 @@ export function processAutoCapture(
 
   // M5: Pass source directly to store() — no two-step INSERT+UPDATE.
   // Also thread projectId through so the memory is scoped correctly (K2/I3).
+  // Issue #3: propagate claude_session_id so memories are linked to their session.
   const memoryId = memRepo.store({
     title: decision.memory.title,
     body: decision.memory.body,
@@ -148,6 +150,7 @@ export function processAutoCapture(
     tags: decision.memory.tags,
     importance: decision.memory.importance_score,
     source: "auto-capture",
+    claudeSessionId: input.claude_session_id,
   });
 
   tracker.record(cooldownKey);

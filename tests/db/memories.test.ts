@@ -191,6 +191,92 @@ describe("batched access tracking (v2)", () => {
     expect(row.project_id).toBe(projectId);
   });
 
+  it("store() accepts claudeSessionId and stores it", () => {
+    const id = repo.store({
+      title: "session mem",
+      body: "b",
+      memoryType: "fact",
+      scope: "project",
+      claudeSessionId: "sess-abc123",
+    });
+    const row = db.prepare("SELECT claude_session_id FROM memories WHERE id = ?").get(id) as any;
+    expect(row.claude_session_id).toBe("sess-abc123");
+  });
+
+  it("listBySession() returns memories for that session only", () => {
+    const sessA = "sess-list-a";
+    const sessB = "sess-list-b";
+    repo.store({ title: "A1", body: "b", memoryType: "fact", scope: "global", claudeSessionId: sessA });
+    repo.store({ title: "A2", body: "b", memoryType: "fact", scope: "global", claudeSessionId: sessA });
+    repo.store({ title: "B1", body: "b", memoryType: "fact", scope: "global", claudeSessionId: sessB });
+
+    const resultA = repo.listBySession(sessA);
+    expect(resultA.length).toBe(2);
+    expect(resultA.every((m: any) => m.claude_session_id === sessA)).toBe(true);
+  });
+
+  it("listBySession() sourceFilter limits to matching source", () => {
+    const sessId = "sess-filter";
+    repo.store({ title: "cap", body: "b", memoryType: "fact", scope: "global", source: "auto-capture", claudeSessionId: sessId });
+    repo.store({ title: "sum", body: "b", memoryType: "session_summary", scope: "global", source: "session-summary", claudeSessionId: sessId });
+
+    const captures = repo.listBySession(sessId, { sourceFilter: "auto-capture" });
+    expect(captures.length).toBe(1);
+    expect(captures[0].source).toBe("auto-capture");
+  });
+
+  it("getNeighbors uses claude_session_id when available (sameSessionOnly=true)", () => {
+    const sessId = "sess-neighbors";
+    const projectId = repo.ensureProject("/test/getneighbors");
+
+    const id1 = repo.store({ title: "N1", body: "b1", memoryType: "fact", scope: "project", projectId, claudeSessionId: sessId });
+    const id2 = repo.store({ title: "N2", body: "b2", memoryType: "fact", scope: "project", projectId, claudeSessionId: sessId });
+    const id3 = repo.store({ title: "N3", body: "b3", memoryType: "fact", scope: "project", projectId, claudeSessionId: "other-session" });
+    const id4 = repo.store({ title: "N4", body: "b4", memoryType: "fact", scope: "project", projectId, claudeSessionId: sessId });
+
+    const focus = db.prepare("SELECT * FROM memories WHERE id = ?").get(id2) as any;
+    const neighbors = repo.getNeighbors(focus, 5, true);
+
+    const neighborIds = neighbors.map((n: any) => n.id);
+    // N1 and N4 share the session, should appear
+    expect(neighborIds).toContain(id1);
+    expect(neighborIds).toContain(id4);
+    // N3 is from a different session, should not appear
+    expect(neighborIds).not.toContain(id3);
+  });
+
+  it("getNeighbors falls back to time window when claude_session_id is null", () => {
+    const projectId = repo.ensureProject("/test/getneighbors-fallback");
+
+    // Store memories without claude_session_id
+    const id1 = repo.store({ title: "T1", body: "b1", memoryType: "fact", scope: "project", projectId });
+    const id2 = repo.store({ title: "T2", body: "b2", memoryType: "fact", scope: "project", projectId });
+
+    const focus = db.prepare("SELECT * FROM memories WHERE id = ?").get(id1) as any;
+    expect(focus.claude_session_id).toBeNull();
+
+    // With sameSessionOnly=true but no claude_session_id, falls back to time window
+    const neighbors = repo.getNeighbors(focus, 5, true);
+    // id2 was created just now, within ±2h window
+    const neighborIds = neighbors.map((n: any) => n.id);
+    expect(neighborIds).toContain(id2);
+  });
+
+  it("getNeighbors sameSessionOnly=false uses time window regardless of session id", () => {
+    const projectId = repo.ensureProject("/test/getneighbors-timewindow");
+    const sessId = "sess-tw";
+
+    const id1 = repo.store({ title: "TW1", body: "b1", memoryType: "fact", scope: "project", projectId, claudeSessionId: sessId });
+    const id2 = repo.store({ title: "TW2", body: "b2", memoryType: "fact", scope: "project", projectId, claudeSessionId: "different-sess" });
+
+    const focus = db.prepare("SELECT * FROM memories WHERE id = ?").get(id1) as any;
+
+    // sameSessionOnly=false → time window, so id2 should appear despite different session
+    const neighbors = repo.getNeighbors(focus, 5, false);
+    const neighborIds = neighbors.map((n: any) => n.id);
+    expect(neighborIds).toContain(id2);
+  });
+
   it("R4: store() rejects supersedes self-cycle", () => {
     // Insert a raw memory with a self-referential supersedes_memory_id (edge case)
     const id = "self-cycle-id";

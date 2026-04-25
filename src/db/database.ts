@@ -224,6 +224,36 @@ CREATE TABLE IF NOT EXISTS embeddings (
 CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model);
 `,
   },
+  {
+    version: 5,
+    name: "claude_session_id",
+    sql: "",
+    afterSql: (db: Database.Database) => {
+      // Guard: sessions table may not exist if a minimal v1 schema was seeded manually
+      const existingTables5 = new Set(
+        (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>)
+          .map(r => r.name)
+      );
+      if (existingTables5.has("sessions")) {
+        const sessionCols = db.pragma("table_info(sessions)") as Array<{ name: string }>;
+        const sessionColNames = sessionCols.map(c => c.name);
+        if (!sessionColNames.includes("claude_session_id")) {
+          db.exec("ALTER TABLE sessions ADD COLUMN claude_session_id TEXT");
+        }
+      }
+
+      const memoryCols = db.pragma("table_info(memories)") as Array<{ name: string }>;
+      const memoryColNames = memoryCols.map(c => c.name);
+      if (!memoryColNames.includes("claude_session_id")) {
+        db.exec("ALTER TABLE memories ADD COLUMN claude_session_id TEXT");
+      }
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memories_claude_session
+        ON memories(claude_session_id) WHERE deleted_at IS NULL
+      `);
+    },
+  },
 ];
 
 const FTS_TRIGGERS_SQL = `

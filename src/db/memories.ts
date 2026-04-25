@@ -25,6 +25,7 @@ export interface StoreParams {
   supersedesId?: string;
   pin?: boolean;
   source?: string;           // M5: "user" (default) | "auto-capture" | "compression"
+  claudeSessionId?: string;  // Issue #3: Claude Code session ID for linking memories to sessions
 }
 
 export interface SearchOptions {
@@ -82,14 +83,17 @@ export class MemoriesRepo {
     }
 
     // M5: source column included in the INSERT. Defaults to 'user' if not provided.
+    // Issue #3: claude_session_id column added in migration v5.
     this.db.prepare(`
       INSERT INTO memories (id, project_id, memory_type, scope, title, body, tags,
                             importance_score, is_pinned, supersedes_memory_id, source,
+                            claude_session_id,
                             created_at, updated_at, last_accessed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, projectId, params.memoryType ?? "fact", params.scope ?? "project",
            params.title, params.body, tagsStr, params.importance ?? 0.5,
            params.pin ? 1 : 0, params.supersedesId || null, params.source ?? "user",
+           params.claudeSessionId ?? null,
            now, now, now);
     return id;
   }
@@ -264,8 +268,10 @@ export class MemoriesRepo {
 
   /**
    * Get memories created around a given memory (its chronological neighborhood).
-   * If sameSessionOnly is true and claude_session_id column exists, filters by that.
-   * Otherwise falls back to ±2h created_at window.
+   * If sameSessionOnly is true:
+   *   - If focus.claude_session_id is set, prefer exact claude_session_id match.
+   *   - Fall back to ±2h created_at window when claude_session_id is null.
+   * If sameSessionOnly is false, return time-window-based neighbors regardless.
    *
    * @param focus - The memory to find neighbors for
    * @param window - Number of memories to return on each side (default 3, so ±3 = up to 6 neighbors)
@@ -276,16 +282,36 @@ export class MemoriesRepo {
     if (!focus || !focus.id || !focus.project_id) return [];
 
     const focusTime = focus.created_at ?? new Date().toISOString();
+    const limit = window * 2 + 1;
 
-    // Build the query with time-window filtering (±2h from focus)
-    // If sameSessionOnly is true and claude_session_id exists, also filter by that
-    // For now, we use the ±2h window as the fallback (issue #3 will extend this to use claude_session_id)
+    // Issue #3: When sameSessionOnly=true and claude_session_id is available on the focus memory,
+    // use exact session match. Fall back to ±2h time window when claude_session_id is null.
+    if (sameSessionOnly && focus.claude_session_id) {
+      const rows = this.db.prepare(`
+        SELECT * FROM memories
+        WHERE project_id = ? AND deleted_at IS NULL
+          AND id != ?
+          AND claude_session_id = ?
+        ORDER BY created_at ASC
+        LIMIT ?
+      `).all(
+        focus.project_id,
+        focus.id,
+        focus.claude_session_id,
+        limit
+      ) as any[];
+      return rows;
+    }
+
+    // Time-window fallback: ±2h from focus (used when sameSessionOnly=false or claude_session_id is null).
+    // Use strftime('%s', ...) for epoch-based comparison to avoid T-vs-space format mismatch
+    // between stored ISO 8601 timestamps (YYYY-MM-DDTHH:MM:SSZ) and SQLite's datetime() output.
     const rows = this.db.prepare(`
       SELECT * FROM memories
       WHERE project_id = ? AND deleted_at IS NULL
         AND id != ?
-        AND created_at >= datetime(?, '-2 hours')
-        AND created_at <= datetime(?, '+2 hours')
+        AND strftime('%s', created_at) >= strftime('%s', datetime(?, '-2 hours'))
+        AND strftime('%s', created_at) <= strftime('%s', datetime(?, '+2 hours'))
       ORDER BY created_at ASC
       LIMIT ?
     `).all(
@@ -293,9 +319,28 @@ export class MemoriesRepo {
       focus.id,
       focusTime,
       focusTime,
-      window * 2 + 1 // Request a bit more to account for filtering
+      limit
     ) as any[];
 
     return rows;
+  }
+
+  /**
+   * Issue #3: List all memories for a given Claude session ID.
+   * Optionally filter by source (e.g. 'auto-capture').
+   */
+  listBySession(claudeSessionId: string, opts?: { sourceFilter?: string }): any[] {
+    const params: any[] = [claudeSessionId];
+    let sourceClause = "";
+    if (opts?.sourceFilter) {
+      sourceClause = "AND source = ?";
+      params.push(opts.sourceFilter);
+    }
+    return this.db.prepare(`
+      SELECT * FROM memories
+      WHERE claude_session_id = ? AND deleted_at IS NULL
+        ${sourceClause}
+      ORDER BY created_at ASC
+    `).all(...params) as any[];
   }
 }

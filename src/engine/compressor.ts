@@ -298,6 +298,98 @@ export function mergeCluster(cluster: CompressionCluster): CompressionResult {
   };
 }
 
+export interface SessionSummaryResult {
+  title: string;
+  body: string;
+  tags: string[];
+  tokens_before: number;
+  tokens_after: number;
+  importance: number;
+}
+
+/**
+ * Issue #3: Produce a single deterministic session summary from a list of memories.
+ * Skips clustering — treats all inputs as one cluster. Title pattern:
+ *   "Session summary — YYYY-MM-DD — N captures"
+ * Importance = max of source importances.
+ * Tags = union of source tags (deduplicated).
+ * Body = merged text under cfg.maxBodyRatio budget (or sessionEndMaxBodyTokens if provided).
+ */
+export function summarizeAsCluster(
+  memories: MemoryRecord[],
+  cfg: CompressionConfig & { maxBodyTokens?: number }
+): SessionSummaryResult {
+  if (memories.length === 0) {
+    return { title: "Session summary", body: "", tags: [], tokens_before: 0, tokens_after: 0, importance: 0.5 };
+  }
+
+  const allTags = new Set<string>();
+  const facts: string[] = [];
+
+  let tokens_before = 0;
+  for (const mem of memories) {
+    tokens_before += estimateTokensV2(`${mem.title} ${mem.body ?? ""}`);
+
+    // Collect tags
+    for (const t of parseTags(mem.tags)) allTags.add(t);
+
+    // Extract unique sentences (same dedup logic as mergeCluster)
+    const sentences = (mem.body ?? "")
+      .split(/[.!?\n]+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 10);
+    for (const sentence of sentences) {
+      let isNew = true;
+      for (const existing of facts) {
+        if (jaccardSimilarity(sentence, existing) > 0.6) {
+          isNew = false;
+          break;
+        }
+      }
+      if (isNew) facts.push(sentence);
+    }
+  }
+
+  // Title: "Session summary — YYYY-MM-DD — N captures"
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const title = `Session summary — ${dateStr} — ${memories.length} captures`;
+
+  // Score facts by importance signal (same heuristic as mergeCluster)
+  const scoreFact = (fact: string): number => {
+    const lengthScore = fact.length;
+    const colonBonus = fact.includes(":") ? 1.2 : 1;
+    const signalBonus = /error|fix|fail|bug|crash/i.test(fact) ? 1.5 : 1;
+    return lengthScore * colonBonus * signalBonus;
+  };
+  const sortedFacts = [...facts].sort((a, b) => scoreFact(b) - scoreFact(a));
+
+  // Token budget: prefer explicit maxBodyTokens cap, fall back to ratio of total
+  const tokenBudget = cfg.maxBodyTokens != null
+    ? cfg.maxBodyTokens
+    : Math.max(32, Math.floor(tokens_before * cfg.max_body_ratio));
+
+  let body = "";
+  let currentTokens = 0;
+  for (const fact of sortedFacts) {
+    const factTokens = estimateTokensV2(fact);
+    if (currentTokens + factTokens > tokenBudget) break;
+    body += `- ${fact}\n`;
+    currentTokens += factTokens;
+  }
+
+  const importance = Math.min(1.0, Math.max(...memories.map(m => m.importance_score)));
+  const tokens_after = estimateTokensV2(`${title} ${body.trim()}`);
+
+  return {
+    title,
+    body: body.trim(),
+    tags: [...allTags],
+    tokens_before,
+    tokens_after,
+    importance,
+  };
+}
+
 export function shouldCompress(
   db: Database.Database,
   projectId: string,

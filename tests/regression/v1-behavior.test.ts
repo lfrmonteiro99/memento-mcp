@@ -236,9 +236,9 @@ describe("v1 regression: database schema", () => {
     expect(tables).toContain("decisions_fts");
   });
 
-  it("schema version is 4 for fresh DB (v4 migration applied)", () => {
+  it("schema version is 5 for fresh DB (v5 migration applied)", () => {
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(4);
+    expect(version).toBe(5);
   });
 
   it("FTS sync triggers exist", () => {

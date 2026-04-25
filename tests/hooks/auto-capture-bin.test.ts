@@ -26,6 +26,7 @@ describe("auto-capture-bin integration (R8 + K2 + K7)", () => {
         "src/hooks/search-context.ts",
         "src/hooks/session-context.ts",
         "src/hooks/auto-capture-bin.ts",
+        "src/hooks/session-summarize-bin.ts",
         "--format", "esm",
         "--dts",
         "--clean",
