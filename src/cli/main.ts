@@ -718,6 +718,125 @@ This file describes the vault layout for memento-mcp routing.
     process.exit(1);
   }
 
+} else if (command === "import" && sub === "claude-md") {
+  // Issue #13: import an existing CLAUDE.md file into typed memories
+  const { existsSync: fsExists, readFileSync: fsRead } = await import("node:fs");
+  const { join: pathJoin } = await import("node:path");
+  const { homedir } = await import("node:os");
+  const { parseClaudeMd } = await import("../lib/import-claude-md.js");
+  const { loadConfig, getDefaultConfigPath, getDefaultDbPath } = await import("../lib/config.js");
+  const { createDatabase } = await import("../db/database.js");
+  const { MemoriesRepo } = await import("../db/memories.js");
+  const { loadProjectPolicy } = await import("../lib/policy.js");
+
+  const args = argv.slice(4);
+  let importPath: string | undefined;
+  let scope: "global" | "project" = "project";
+  let defaultType = "fact";
+  let dryRun = false;
+  let noConfirm = false;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--scope" && args[i + 1]) { scope = args[++i] as "global" | "project"; }
+    else if (args[i] === "--type" && args[i + 1]) { defaultType = args[++i]; }
+    else if (args[i] === "--dry-run") { dryRun = true; }
+    else if (args[i] === "--no-confirm") { noConfirm = true; }
+    else if (!importPath && !args[i].startsWith("--")) { importPath = args[i]; }
+  }
+
+  if (!importPath) {
+    importPath = scope === "global"
+      ? pathJoin(homedir(), ".claude", "CLAUDE.md")
+      : pathJoin(process.cwd(), "CLAUDE.md");
+  }
+
+  if (!fsExists(importPath)) {
+    console.error(`Source file not found: ${importPath}`);
+    process.exit(1);
+  }
+
+  const content = fsRead(importPath, "utf-8");
+  const { sections, skipped } = parseClaudeMd(content, defaultType);
+
+  console.log(`\nFound ${sections.length} sections (${skipped.length} skipped) in ${importPath}\n`);
+  for (const s of sections) {
+    console.log(`  [${s.inferredType}] ${s.title}`);
+    if (s.inferredTags.length) console.log(`    tags: ${s.inferredTags.join(", ")}`);
+  }
+  if (skipped.length) {
+    console.log(`\nSkipped ${skipped.length}:`);
+    for (const sk of skipped) console.log(`  (${sk.reason}) ${sk.preview.slice(0, 60)}...`);
+  }
+
+  if (dryRun) { console.log("\nDry run — nothing imported."); process.exit(0); }
+
+  if (!noConfirm) {
+    const ok = await (async () => {
+      const { createInterface } = await import("node:readline/promises");
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const ans = await rl.question(`\nImport ${sections.length} memories? [y/N] `);
+      rl.close();
+      return /^y(es)?$/i.test(ans.trim());
+    })();
+    if (!ok) process.exit(0);
+  }
+
+  // Load policy for cwd so imports respect required_tags / banned_content (Issue #9 composition)
+  const projectRoot = process.cwd();
+  const policy = loadProjectPolicy(projectRoot);
+
+  // Open DB and store
+  const config = loadConfig(getDefaultConfigPath());
+  const db = createDatabase(process.env.MEMENTO_DB_PATH ?? (config.database.path || getDefaultDbPath()));
+  const repo = new MemoriesRepo(db);
+
+  let created = 0;
+  let dupes = 0;
+  let policyBlocked = 0;
+
+  for (const s of sections) {
+    // Skip duplicates by title within target scope
+    const existing = db.prepare(
+      "SELECT id FROM memories WHERE title = ? AND scope = ? AND deleted_at IS NULL LIMIT 1"
+    ).get(s.title, scope) as { id: string } | undefined;
+    if (existing) { dupes++; continue; }
+
+    // Policy: required_tags check
+    if (policy && policy.requiredTagsAnyOf.length > 0) {
+      const hasAny = policy.requiredTagsAnyOf.some(t => s.inferredTags.includes(t));
+      if (!hasAny) {
+        policyBlocked++;
+        console.log(`  POLICY SKIP (required_tags.any_of not met): ${s.title}`);
+        continue;
+      }
+    }
+
+    // Policy: banned_content check
+    if (policy && policy.bannedContent.length > 0) {
+      const combined = `${s.title}\n${s.body}\n${s.inferredTags.join(" ")}`;
+      const banned = policy.bannedContent.some(re => re.test(combined));
+      if (banned) {
+        policyBlocked++;
+        console.log(`  POLICY SKIP (banned content): ${s.title}`);
+        continue;
+      }
+    }
+
+    repo.store({
+      title: s.title,
+      body: s.body,
+      memoryType: s.inferredType,
+      scope,
+      tags: s.inferredTags,
+      importance: 0.6,
+      source: "import-claude-md",
+    });
+    created++;
+  }
+
+  console.log(`\nImported ${created} memories (${dupes} duplicate(s) skipped${policyBlocked > 0 ? `, ${policyBlocked} blocked by policy` : ""}).`);
+  db.close();
+
 } else if (command === "--version" || command === "-v") {
   console.log("memento-mcp v1.0.0");
 
