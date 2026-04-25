@@ -32,21 +32,6 @@ memento-mcp ui                      # localhost web inspector
 - **Adaptive ranking** — utility-feedback loop weights past-injection success into future scoring.
 - **Hot-take MIT license** — fork it, ship it, embed it.
 
-## How it differs from claude-mem
-
-| | claude-mem | memento-mcp |
-|---|---|---|
-| Distribution | Claude Code plugin | stdio MCP server — works with Codex, Claude Code, Cursor, any stdio-MCP client |
-| Memory shape | untyped observations | typed (fact / decision / pattern / architecture / pitfall) |
-| Storage | SQLite + Chroma vector DB | SQLite + FTS5; optional embeddings (BYO key) |
-| Team sharing | none | git-tracked JSON, `sync push`/`pull` |
-| Per-project policy | none | `.memento/policy.toml` (required tags, banned content, retention) |
-| Curated knowledge | none | Obsidian vault layer with intent-aware routing |
-| Runtime deps | Bun, Python uv, Chroma daemon | `better-sqlite3` only |
-| End-of-session summary | LLM | deterministic + opt-in LLM |
-| Web UI | localhost:37777 | localhost:37778 |
-| License | AGPL-3.0 | **MIT** |
-
 ## 60-second tour
 
 ```bash
@@ -83,7 +68,7 @@ Searches and hooks combine both. Memories can be promoted into vault notes with 
 
 ## Team-scoped memories (git sync)
 
-This is the feature claude-mem cannot match. memento-mcp can ship memories to your team via git, with no server, no auth, no infrastructure.
+memento-mcp can ship memories to your team via git — no server, no auth, no infrastructure to host. Memories tagged `[scope=team]` serialize to a `.memento/` folder in your repo; commit, push, and your teammate runs one command to merge them in.
 
 ```bash
 # In a git repo, one-time setup:
