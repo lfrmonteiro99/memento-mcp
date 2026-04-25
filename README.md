@@ -1,34 +1,131 @@
 # memento-mcp
 
-Persistent memory MCP server for coding agents and apps. `memento-mcp` stores typed operational memory in SQLite, can index a curated Obsidian vault, and injects relevant context back into supported clients.
+**Persistent typed memory for AI coding agents.** Runs as a local MCP server, ships memories to your team via git, keeps everything on your machine.
 
 ![Memento Memory MCP overview](docs/assets/hero-overview.png)
 
-## What It Is
+memento-mcp gives Claude Code, Codex, Cursor, and any stdio-MCP client a real memory: typed facts, decisions, patterns, architecture notes, and pitfalls — stored in SQLite, optionally indexed against an Obsidian vault, optionally synced across your team via git, optionally enriched with semantic embeddings, and injected back into your prompts at the right moments.
 
-`memento-mcp` has two complementary knowledge layers:
+```bash
+npm install -g @lfrmonteiro99/memento-memory-mcp
+memento-mcp install                 # wires your MCP client
+memento-mcp import claude-md        # five-second onramp from existing CLAUDE.md
+memento-mcp ui                      # localhost web inspector
+```
 
-- **SQLite memory layer** for fast, typed, operational memory written by the agent
-- **Vault knowledge layer** for curated Markdown notes from an Obsidian vault
+## Why memento-mcp
 
-That split is intentional:
+- **Typed memories** — fact, decision, preference, pattern, architecture, pitfall. Each has dedicated tools (`decisions_log`, `pitfalls_log`) and its own ranking weights.
+- **Team memory via git** — `[scope=team]` memories serialize to `.memento/memories/<id>.json`. Commit, push. Your teammate runs `memento-mcp sync pull` and their memento knows what you learned.
+- **Per-project policy** — `.memento/policy.toml` enforces required tags, banned content patterns, retention overrides, vault auto-promotion. Versioned in your repo, not your machine.
+- **Local-first by default** — SQLite + FTS5. No vector DB to host, no daemon to babysit, no cloud account required.
+- **Optional embeddings** — opt-in OpenAI vector search alongside FTS5, merged via adaptive ranker. Bring your own key.
+- **Smart write-time dedup** — when embeddings are on, near-duplicates are caught at write time, not weeks later in compression.
+- **End-of-session summaries** — deterministic by default, opt-in LLM-assisted (Anthropic or OpenAI) for prose summaries.
+- **Curated vault layer** — index an Obsidian vault; route through `me.md`, `vault.md`, maps, skills, and playbooks; optionally promote stored memories into vault notes.
+- **Privacy by design** — `<private>...</private>` regions are excluded from the FTS index, redacted in search and injection, and never leave the machine via embedding / LLM / sync paths. `scrubSecrets` covers env-var prefixes, JWTs, GitHub PATs, embedded URL credentials, and Authorization headers — applied to titles and bodies at write time.
+- **Token-aware search** — every result shows its token cost; the agent picks the cheap layer first (`detail=index` → `memory_timeline` → `memory_get`).
+- **Mode profiles** — English, Portuguese, Spanish stop-words and trivial-prompt classifiers, switchable via `MEMENTO_PROFILE` env var or config.
+- **Hooks for Claude Code** — `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `SessionEnd` for automatic context injection, auto-capture, and session distillation.
+- **Web inspector** — `memento-mcp ui` opens a localhost browser UI for memories, sessions, sync drift, projects, and analytics.
+- **Five-second onramp** — `memento-mcp import claude-md` converts your existing CLAUDE.md flat memory into typed memories.
+- **Adaptive ranking** — utility-feedback loop weights past-injection success into future scoring.
+- **Hot-take MIT license** — fork it, ship it, embed it.
 
-- `memory_store` always writes to SQLite
-- vault notes are read, routed, indexed, and optionally promoted from stored memories
-- searches and hooks can combine SQLite memories, vault notes, and legacy file memories
+## How it differs from claude-mem
+
+| | claude-mem | memento-mcp |
+|---|---|---|
+| Distribution | Claude Code plugin | stdio MCP server — works with Codex, Claude Code, Cursor, any stdio-MCP client |
+| Memory shape | untyped observations | typed (fact / decision / pattern / architecture / pitfall) |
+| Storage | SQLite + Chroma vector DB | SQLite + FTS5; optional embeddings (BYO key) |
+| Team sharing | none | git-tracked JSON, `sync push`/`pull` |
+| Per-project policy | none | `.memento/policy.toml` (required tags, banned content, retention) |
+| Curated knowledge | none | Obsidian vault layer with intent-aware routing |
+| Runtime deps | Bun, Python uv, Chroma daemon | `better-sqlite3` only |
+| End-of-session summary | LLM | deterministic + opt-in LLM |
+| Web UI | localhost:37777 | localhost:37778 |
+| License | AGPL-3.0 | **MIT** |
+
+## 60-second tour
+
+```bash
+# 1. Install
+npm install -g @lfrmonteiro99/memento-memory-mcp
+
+# 2. Wire your MCP client (writes ~/.codex or ~/.claude config)
+memento-mcp install
+
+# 3. Bring over what you already wrote
+memento-mcp import claude-md --dry-run         # preview
+memento-mcp import claude-md --no-confirm      # commit
+
+# 4. Browse what's stored
+memento-mcp ui                                 # http://127.0.0.1:37778
+
+# 5. Share with your team (in a git repo)
+memento-mcp sync init                          # creates .memento/
+# Store memories with scope="team"; commit .memento/; teammates run:
+memento-mcp sync pull
+```
+
+## Two complementary knowledge layers
+
+memento-mcp keeps two layers, deliberately separate:
+
+- **SQLite memory layer** — fast, typed, operational memory the agent writes via `memory_store`, `decisions_log`, `pitfalls_log`. This is where session-derived knowledge lives.
+- **Vault knowledge layer** — curated Markdown notes from an Obsidian vault, indexed and routed but never auto-written by the agent. This is where your long-form, hand-curated context lives.
+
+Searches and hooks combine both. Memories can be promoted into vault notes with one flag.
 
 ![What is Memento Memory MCP](docs/assets/what-is-memento-memory-mcp.png)
-
-## Why Use It
-
-- **Typed memory**: fact, decision, preference, pattern, architecture, pitfall
-- **Fast search**: FTS5 ranking with decay-aware scoring
-- **Hook-ready context injection**: useful for Claude Code and similar workflows
-- **Curated vault support**: route through `me.md`, `vault.md`, maps, skills, and playbooks
-- **Optional vault promotion**: persist a memory to SQLite and also write it into your vault
-- **Local-first**: SQLite and vault files stay on your machine
-
 ![Why use Memento Memory MCP](docs/assets/why-use-memento-memory-mcp.png)
+
+## Team-scoped memories (git sync)
+
+This is the feature claude-mem cannot match. memento-mcp can ship memories to your team via git, with no server, no auth, no infrastructure.
+
+```bash
+# In a git repo, one-time setup:
+memento-mcp sync init                          # creates .memento/
+git add .memento && git commit -m "memento init" && git push
+
+# Store a memory with team scope (in any client):
+memory_store(title="Use Postgres", content="...", scope="team", memory_type="decision")
+
+# Each store writes a canonical JSON file under .memento/memories/<id>.json
+# (Default: auto_push_on_store = false — call sync push manually so files
+#  appear in `git status` only when you're ready.)
+memento-mcp sync push
+
+git add .memento && git commit -m "memory: auth refactor decisions" && git push
+
+# Your teammate, on the same repo:
+git pull
+memento-mcp sync pull
+# Their memento now knows what you learned.
+```
+
+What you get:
+
+- **Canonical JSON** — sorted keys, 2-space indent, trailing newline. Diffs are minimal and review-friendly.
+- **Atomic writes** — `<id>.json.tmp` then `rename`. Interrupted syncs never leave half-written files.
+- **Path traversal guard** — `pushSingleMemory` resolves and asserts the target stays under `.memento/memories/`.
+- **Future-timestamp guard** — pulled files with `updated_at > now + 24h` are rejected with a warning. A malicious commit can't silently overwrite everyone's memory.
+- **Privacy on the wire** — `<private>` regions are redacted in the JSON; titles and tags pass through `scrubSecrets` before write.
+- **Conflict policy** — last-write-wins by `updated_at`, file wins on tie. `sync status` shows drift; resolution is manual (you have git).
+- **No edges in v1** — relationships ship in a follow-up. Schema is forward-compatible.
+
+Configure in `[sync]`:
+
+```toml
+[sync]
+enabled = true
+auto_push_on_store = false               # opt in to immediate writes
+folder = ".memento"                      # relative to project root
+include_private_in_files = false         # default: redact <private> on write
+max_future_drift_hours = 24
+```
 
 ## Prerequisites
 
@@ -280,6 +377,37 @@ If a project has `.memento/policy.toml` with `required_tags`, sections that prod
 
 All imported memories carry `source = "import-claude-md"` so you can identify them later with `memory_list` or direct SQL queries.
 
+## Privacy: `<private>` tags
+
+memento-mcp has two layers of privacy protection:
+
+**1. `<private>...</private>` tag redaction.** Wrap any sensitive region in tags:
+
+```
+The DB password is <private>p@ssw0rd-from-vault</private> — rotated 2026-04-01.
+```
+
+- Content inside tags is **excluded from the FTS5 index** (a SQLite UDF strips it during indexing). A search for `p@ssw0rd-from-vault` returns 0 hits.
+- Read paths (`memory_search`, `memory_get`, hook injections, web inspector, sync JSON files) replace tagged regions with `[REDACTED]`.
+- `memory_get(id, reveal_private=true)` returns the full body with a banner and emits a `private_revealed` analytics event for audit.
+- Storing with unbalanced tags errors out: `Memory not stored: unbalanced <private> tags`.
+
+**2. `scrubSecrets` — automatic pattern-based scrubbing.** Applied to titles and bodies at the repo write layer, so any caller (manual store, auto-capture, import, summarize) is covered. Patterns currently caught:
+
+- `api_key=`, `password=`, `secret=`, `token=` literal forms
+- Vendor env-var prefixes: `AWS_*`, `AZURE_*`, `GCP_*`, `GITHUB_*`, `STRIPE_*`, `OPENAI_*`, `ANTHROPIC_*`
+- Database/cache/mail prefixes: `DB_*`, `DATABASE_*`, `POSTGRES_*`, `MYSQL_*`, `MONGO_*`, `REDIS_*`, `SMTP_*`, `MAIL_*`, `RABBITMQ_*`, `KAFKA_*`
+- `*_URL=<scheme>://...` env-var assignments
+- URLs with embedded credentials (`https://user:pass@host` → `https://[REDACTED]@host`, host preserved for context)
+- `Authorization: <scheme> <token>` and standalone `Bearer <token>` (16+ chars)
+- GitHub PATs (`ghp_`, `gho_`, `ghs_`, `ghu_`, `ghr_` + 36+ chars)
+- JWTs (three base64url segments with `eyJ...` header)
+- PEM private key blocks (RSA, EC, OpenSSH, PGP)
+
+The integration test `tests/integration/secret-scrub-coverage.test.ts` is the source of truth. Adding a new write path without covering it there causes the test matrix to fail.
+
+`scrubSecrets` is a safety net, not a guarantee. For sensitive values you control, prefer `<private>` tags.
+
 ## Configuration
 
 Config file:
@@ -393,6 +521,62 @@ Environment variable overrides:
 | `MEMENTO_PROFILE` | Overrides `[profile].id` (builtin: `english` / `portuguese` / `spanish`) |
 
 Malformed TOML is **not** silently ignored. The server logs a `WARN` to stderr and falls back to defaults (see `MEMENTO_LOG_LEVEL`).
+
+## Per-project policy (`.memento/policy.toml`)
+
+Beyond the global config, each project can ship its own policy file alongside `.eslintrc` and `tsconfig.json`. Policy is **purely additive** — it tightens the global setting, never loosens it.
+
+Discovery walks up from `cwd` looking for `.memento/policy.toml` (preferred) or `.memento.toml` (back-compat). Symlink-safe (resolves `realpath` and aborts outside the user's home).
+
+Example `.memento/policy.toml`:
+
+```toml
+schema_version = 1
+
+[required_tags]
+# Every new memory must carry at least one of these tags.
+any_of = ["area:auth", "area:db", "area:ui", "area:infra"]
+
+[banned_content]
+# ReDoS-safe: patterns longer than 200 chars or with nested quantifiers
+# are rejected at compile time with a warning.
+patterns = [
+  '(?i)internal-tool-name-x',
+  '(?i)\bcustomer\s+data\b',
+]
+
+[retention]
+max_age_days = 180     # tightens global pruning for this project only
+min_importance = 0.4
+
+[default_importance_by_type]
+decision = 0.7
+architecture = 0.7
+pattern = 0.6
+fact = 0.4
+
+[auto_promote_to_vault]
+types = ["architecture", "decision"]
+
+[profile]
+extra_stop_words = ["myproject", "internal"]    # adds to active mode profile
+```
+
+Enforcement runs at the write path:
+
+- `required_tags.any_of` blocks `memory_store` if no listed tag is present.
+- `banned_content` regexes are tested against title, body, AND tags at write time.
+- `default_importance_by_type` fills in `importance_score` when not explicitly set.
+- `auto_promote_to_vault` flips `persist_to_vault = true` for matching `memory_type` values.
+- `extra_stop_words` extends the active mode profile during keyword extraction.
+
+Manage policies with the CLI:
+
+```bash
+memento-mcp policy                    # show the resolved policy for cwd
+memento-mcp policy validate <path>    # parse and report errors
+memento-mcp policy init               # write a richly-commented template
+```
 
 ## Mode Profiles
 
@@ -596,6 +780,85 @@ Promoted notes are marked with:
 - `memento_memory_id: <sqlite-memory-id>`
 
 This gives idempotent create/update behavior when using `create_or_update`.
+
+## Optional embeddings (semantic search)
+
+memento-mcp ships an opt-in embedding layer that catches semantically similar memories the FTS5 keyword index would miss (e.g. "auth bug" finds "JWT validation failure"). It is **off by default** — no behavior change unless you enable it and provide an API key.
+
+Configure in `[search.embeddings]`:
+
+```toml
+[search.embeddings]
+enabled = false                       # opt-in
+provider = "openai"
+model = "text-embedding-3-small"
+api_key_env = "OPENAI_API_KEY"
+dim = 1536
+top_k = 20
+similarity_threshold = 0.5
+```
+
+Backfill embeddings for existing memories:
+
+```bash
+memento-mcp backfill-embeddings --dry-run    # see what would happen
+memento-mcp backfill-embeddings              # do it
+```
+
+When enabled, the search hook merges FTS candidates with cosine top-K, then runs the existing adaptive ranker with rebalanced weights. Failures (network, timeout, missing key) gracefully fall back to FTS-only — embeddings never block a write or break a search.
+
+## Smart write-time dedup
+
+When embeddings are on, memento-mcp can refuse near-duplicate memories at write time instead of cleaning them up later in compression. **Off by default** — separate opt-in even when embeddings are enabled, because every write triggers an embedding API call.
+
+```toml
+[search.embeddings]
+dedup = false                              # explicit second opt-in
+dedup_threshold = 0.92
+dedup_default_mode = "warn"                # "strict" | "warn" | "off"
+dedup_check_on_update = true
+dedup_max_scan = 2000                      # safety cap on per-write scan
+```
+
+Per-call override:
+
+```
+memory_store(title="...", content="...", dedup="strict")    # block duplicates
+memory_store(..., dedup="warn")                             # default — store + note
+memory_store(..., dedup="off")                              # bypass
+```
+
+A `warn` mode hit returns: `Near-duplicate of "Use Postgres" (sim 0.94, id abc-123). Consider memory_update or memory_link.`
+
+The dedup pipeline applies `scrubSecrets` and `redactPrivate` to the candidate text **before** it leaves for the embedding API. `<private>` regions and recognized secret patterns never reach the provider.
+
+## End-of-session summaries
+
+The `SessionEnd` hook (`memento-hook-summarize`) compresses a session's auto-captures into a single typed `session_summary` memory, linked to the `claude_session_id`. **Deterministic by default** — uses the existing compression clustering, no LLM call required.
+
+Opt in to LLM-assisted summaries for prose distillation (sections: *what changed*, *decisions*, *blockers*, *open questions*):
+
+```toml
+[hooks]
+summarize_mode = "llm"                          # "deterministic" | "llm"
+
+[hooks.session_end_llm]
+provider = "anthropic"                           # "anthropic" | "openai"
+model = "claude-haiku-3-5"                       # alias, not a dated id
+api_key_env = "ANTHROPIC_API_KEY"
+max_input_tokens = 4000
+max_output_tokens = 800
+request_timeout_ms = 8000                        # must be < SessionEnd subprocess budget
+fallback_to_deterministic = true
+```
+
+Audit before enabling — print the exact prompt that would be sent without making any API call:
+
+```bash
+memento-mcp session summarize <claude_session_id> --dry-run
+```
+
+Privacy: `scrubSecrets` and `redactPrivate` are applied to every capture's body **and** to the final assembled-and-truncated prompt (so a truncation boundary that splits a `<private>` tag still redacts correctly). The provider class is unloggable — `toJSON()` returns `"[LlmProvider redacted]"` to prevent accidental key serialization.
 
 ## Token-aware search workflow
 
