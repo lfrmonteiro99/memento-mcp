@@ -24,6 +24,16 @@ export interface VaultConfig {
   autoPromoteTypes: string[];
 }
 
+export interface SessionEndLlmConfig {
+  provider: "anthropic" | "openai";
+  model: string;
+  apiKeyEnv: string;
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  requestTimeoutMs: number;
+  fallbackToDeterministic: boolean;
+}
+
 export interface Config {
   budget: { total: number; floor: number; refill: number; sessionTimeout: number };
   search: {
@@ -55,6 +65,8 @@ export interface Config {
     sessionEndMinCaptures: number;
     sessionEndMaxBodyTokens: number;
     sessionEndKeepOriginals: boolean;
+    summarizeMode: "deterministic" | "llm";
+    sessionEndLlm: SessionEndLlmConfig;
   };
   pruning: { enabled: boolean; maxAgeDays: number; minImportance: number; intervalHours: number };
   database: { path: string };
@@ -152,6 +164,19 @@ export const DEFAULT_CONFIG: Config = {
     sessionEndMinCaptures: 2,
     sessionEndMaxBodyTokens: 1500,
     sessionEndKeepOriginals: false,
+    summarizeMode: "deterministic" as "deterministic" | "llm",
+    sessionEndLlm: {
+      provider: "anthropic" as "anthropic" | "openai",
+      // Default model uses an alias (not a dated ID) to avoid 404s when models retire.
+      model: "claude-haiku-3-5",
+      apiKeyEnv: "ANTHROPIC_API_KEY",
+      maxInputTokens: 4000,
+      maxOutputTokens: 800,
+      // Must be less than the SessionEnd hook subprocess timeout (10s in Claude Code today).
+      // If the LLM call exceeds this, the hook falls back to the deterministic summary.
+      requestTimeoutMs: 8000,
+      fallbackToDeterministic: true,
+    },
   },
   pruning: { enabled: true, maxAgeDays: 60, minImportance: 0.3, intervalHours: 24 },
   database: { path: "" },
@@ -270,6 +295,17 @@ export function loadConfig(configPath: string): Config {
     if (toml.hooks.session_end_min_captures != null) config.hooks.sessionEndMinCaptures = Number(toml.hooks.session_end_min_captures);
     if (toml.hooks.session_end_max_body_tokens != null) config.hooks.sessionEndMaxBodyTokens = Number(toml.hooks.session_end_max_body_tokens);
     if (toml.hooks.session_end_keep_originals != null) config.hooks.sessionEndKeepOriginals = Boolean(toml.hooks.session_end_keep_originals);
+    if (toml.hooks.summarize_mode) config.hooks.summarizeMode = String(toml.hooks.summarize_mode) as "deterministic" | "llm";
+    if (toml.hooks.session_end_llm && typeof toml.hooks.session_end_llm === "object") {
+      const llm = toml.hooks.session_end_llm;
+      if (llm.provider) config.hooks.sessionEndLlm.provider = String(llm.provider) as "anthropic" | "openai";
+      if (llm.model) config.hooks.sessionEndLlm.model = String(llm.model);
+      if (llm.api_key_env) config.hooks.sessionEndLlm.apiKeyEnv = String(llm.api_key_env);
+      if (llm.max_input_tokens != null) config.hooks.sessionEndLlm.maxInputTokens = Number(llm.max_input_tokens);
+      if (llm.max_output_tokens != null) config.hooks.sessionEndLlm.maxOutputTokens = Number(llm.max_output_tokens);
+      if (llm.request_timeout_ms != null) config.hooks.sessionEndLlm.requestTimeoutMs = Number(llm.request_timeout_ms);
+      if (llm.fallback_to_deterministic != null) config.hooks.sessionEndLlm.fallbackToDeterministic = Boolean(llm.fallback_to_deterministic);
+    }
   }
   if (toml.pruning) {
     if (toml.pruning.enabled != null) config.pruning.enabled = Boolean(toml.pruning.enabled);

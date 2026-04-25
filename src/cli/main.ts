@@ -460,6 +460,163 @@ This file describes the vault layout for memento-mcp routing.
     process.exit(1);
   }
 
+} else if (command === "session") {
+  // noun-verb: memento-mcp session summarize <session_id> [--mode=llm|deterministic] [--dry-run]
+  if (sub === "summarize") {
+    const { loadConfig, getDefaultConfigPath, getDefaultDbPath } = await import("../lib/config.js");
+    const { createDatabase } = await import("../db/database.js");
+    const { MemoriesRepo } = await import("../db/memories.js");
+    const { buildSessionSummaryPrompt } = await import("../engine/llm/session-summary-prompt.js");
+    const { createLlmProvider } = await import("../engine/llm/provider.js");
+    const { summarizeAsCluster } = await import("../engine/compressor.js");
+    const { redactPrivate } = await import("../engine/privacy.js");
+
+    const args = argv.slice(4);
+    // First positional arg after "session summarize" is the session_id
+    let claudeSessionId: string | undefined;
+    let modeFlagOverride: string | undefined;
+    let dryRun = false;
+
+    for (let i = 0; i < args.length; i++) {
+      if (args[i].startsWith("--mode=")) {
+        modeFlagOverride = args[i].slice("--mode=".length);
+      } else if (args[i] === "--mode" && args[i + 1]) {
+        modeFlagOverride = args[++i];
+      } else if (args[i] === "--dry-run") {
+        dryRun = true;
+      } else if (!claudeSessionId && !args[i].startsWith("--")) {
+        claudeSessionId = args[i];
+      }
+    }
+
+    if (!claudeSessionId) {
+      console.error("Usage: memento-mcp session summarize <claude_session_id> [--mode=llm|deterministic] [--dry-run]");
+      process.exit(1);
+    }
+
+    const config = loadConfig(getDefaultConfigPath());
+    const db = createDatabase(config.database.path || getDefaultDbPath());
+    const memRepo = new MemoriesRepo(db);
+
+    const captures = memRepo.listBySession(claudeSessionId, { sourceFilter: "auto-capture" });
+
+    if (captures.length === 0) {
+      console.error(`No auto-captures found for session: ${claudeSessionId}`);
+      db.close();
+      process.exit(1);
+    }
+
+    const hooksConfig = config.hooks;
+    const mode = (modeFlagOverride as "deterministic" | "llm" | undefined) ?? hooksConfig.summarizeMode ?? "deterministic";
+    const llmCfg = hooksConfig.sessionEndLlm;
+
+    if (dryRun) {
+      // Build and print the prompt without making any LLM call
+      const now = new Date().toISOString();
+      const summaryInput = {
+        sessionId: claudeSessionId,
+        sessionStart: (captures[captures.length - 1] as any).created_at ?? now,
+        sessionEnd: (captures[0] as any).created_at ?? now,
+        projectName: "unknown",
+        captures: (captures as any[]).map((c) => ({
+          tool: "auto-capture",
+          title: c.title ?? "",
+          body: c.body ?? "",
+          createdAt: c.created_at ?? now,
+        })),
+        decisionsCreated: [],
+        pitfallsCreated: [],
+        injections: 0,
+        budget: { spent: 0, total: config.budget.total },
+      };
+      const { system, user } = buildSessionSummaryPrompt(summaryInput, llmCfg.maxInputTokens);
+      // Safety header required by triage
+      process.stdout.write(`# DRY RUN — DO NOT STORE THIS OUTPUT\n# Generated at ${now}\n\n`);
+      process.stdout.write(`## SYSTEM PROMPT\n\n${system}\n\n## USER PROMPT\n\n${user}\n`);
+      db.close();
+      process.exit(0);
+    }
+
+    // Non-dry-run: run the summarization and print result (don't store)
+    if (mode === "llm") {
+      const provider = createLlmProvider(llmCfg);
+      if (!provider) {
+        console.error(`LLM mode requested but ${llmCfg.apiKeyEnv} is not set. Set the env var or use --mode=deterministic.`);
+        db.close();
+        process.exit(1);
+      }
+      try {
+        const now = new Date().toISOString();
+        const summaryInput = {
+          sessionId: claudeSessionId,
+          sessionStart: (captures[captures.length - 1] as any).created_at ?? now,
+          sessionEnd: (captures[0] as any).created_at ?? now,
+          projectName: "unknown",
+          captures: (captures as any[]).map((c) => ({
+            tool: "auto-capture",
+            title: c.title ?? "",
+            body: c.body ?? "",
+            createdAt: c.created_at ?? now,
+          })),
+          decisionsCreated: [],
+          pitfallsCreated: [],
+          injections: 0,
+          budget: { spent: 0, total: config.budget.total },
+        };
+        const { system, user } = buildSessionSummaryPrompt(summaryInput, llmCfg.maxInputTokens);
+        const text = await provider.complete(system, user, {
+          maxOutputTokens: llmCfg.maxOutputTokens,
+          timeoutMs: llmCfg.requestTimeoutMs,
+        });
+        const body = redactPrivate(text);
+        const dateStr = new Date().toISOString().slice(0, 10);
+        console.log(`Title: Session summary — ${dateStr} — ${captures.length} captures (LLM)`);
+        console.log("");
+        console.log(body);
+      } catch (err) {
+        console.error(`LLM summary failed: ${err instanceof Error ? err.message : String(err)}`);
+        if (llmCfg.fallbackToDeterministic) {
+          console.error("Falling back to deterministic mode...");
+          const compressionCfg = {
+            cluster_similarity_threshold: config.compression.clusterSimilarityThreshold,
+            min_cluster_size: config.compression.minClusterSize,
+            max_body_ratio: config.compression.maxBodyRatio,
+            temporal_window_hours: config.compression.temporalWindowHours,
+            maxBodyTokens: hooksConfig.sessionEndMaxBodyTokens,
+          };
+          const summary = summarizeAsCluster(captures as any[], compressionCfg);
+          console.log(`Title: ${summary.title}`);
+          console.log("");
+          console.log(summary.body);
+        } else {
+          db.close();
+          process.exit(1);
+        }
+      }
+    } else {
+      // Deterministic mode
+      const compressionCfg = {
+        cluster_similarity_threshold: config.compression.clusterSimilarityThreshold,
+        min_cluster_size: config.compression.minClusterSize,
+        max_body_ratio: config.compression.maxBodyRatio,
+        temporal_window_hours: config.compression.temporalWindowHours,
+        maxBodyTokens: hooksConfig.sessionEndMaxBodyTokens,
+      };
+      const summary = summarizeAsCluster(captures as any[], compressionCfg);
+      console.log(`Title: ${summary.title}`);
+      console.log("");
+      console.log(summary.body);
+    }
+
+    db.close();
+    process.exit(0);
+
+  } else {
+    console.error(`Unknown session command: ${sub ?? "(none)"}`);
+    console.error("Usage: memento-mcp session summarize <session_id> [--mode=llm|deterministic] [--dry-run]");
+    process.exit(1);
+  }
+
 } else if (command === "--version" || command === "-v") {
   console.log("memento-mcp v1.0.0");
 

@@ -59,6 +59,12 @@ export function getPruneRecommendations(db: Database.Database): PruneRecommendat
   return recommendations;
 }
 
+export interface SessionSummaryStats {
+  llm: number;
+  deterministic: number;
+  fallback: number;
+}
+
 export interface AnalyticsReport {
   period: string;
   session_count: number;
@@ -85,6 +91,7 @@ export interface AnalyticsReport {
     total_searches: number;
     by_detail: Record<string, number>;
   };
+  session_summary_stats?: SessionSummaryStats;
 }
 
 export function periodToSqlClause(period: string): string {
@@ -192,6 +199,32 @@ export function generateReport(db: Database.Database, projectId: string | null, 
     }
   }
 
+  // Session summary mode stats
+  const summaryRows = db.prepare(`
+    SELECT
+      json_extract(event_data, '$.mode') as mode,
+      json_extract(event_data, '$.fallback') as fallback,
+      COUNT(*) as cnt
+    FROM analytics_events
+    WHERE ${projSql} AND event_type = 'session_summary' ${clause}
+    GROUP BY json_extract(event_data, '$.mode'), json_extract(event_data, '$.fallback')
+  `).all(...projBind) as Array<{ mode: string | null; fallback: number | string | null; cnt: number }>;
+
+  let llmSummaries = 0;
+  let deterministicSummaries = 0;
+  let fallbackSummaries = 0;
+  for (const r of summaryRows) {
+    if (r.mode === "llm") {
+      llmSummaries += r.cnt;
+    } else {
+      deterministicSummaries += r.cnt;
+    }
+    if (r.fallback === 1 || r.fallback === "true" || r.fallback === true) {
+      fallbackSummaries += r.cnt;
+    }
+  }
+  const totalSummaries = llmSummaries + deterministicSummaries;
+
   return {
     period,
     session_count: sessionStats.session_count,
@@ -218,6 +251,11 @@ export function generateReport(db: Database.Database, projectId: string | null, 
     search_layer_stats: totalSearches > 0 ? {
       total_searches: totalSearches,
       by_detail: searchLayerByDetail,
+    } : undefined,
+    session_summary_stats: totalSummaries > 0 ? {
+      llm: llmSummaries,
+      deterministic: deterministicSummaries,
+      fallback: fallbackSummaries,
     } : undefined,
   };
 }

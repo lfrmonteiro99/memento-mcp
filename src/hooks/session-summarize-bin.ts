@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // src/hooks/session-summarize-bin.ts
-// Claude Code hook binary for SessionEnd auto-summarization (Issue #3).
+// Claude Code hook binary for SessionEnd auto-summarization (Issue #3, extended in #10).
 // Registered as a SessionEnd hook in .claude/settings.json:
 //   { "hooks": { "SessionEnd": [{ "hooks": [{ "type": "command", "command": "memento-hook-summarize", "timeout": 10 }] }] } }
 //
 // Reads a SessionEnd event JSON from stdin, produces one session_summary memory
 // from all auto-captures tagged with that claude_session_id, then exits.
 // Never crashes Claude Code: always exits 0 on any failure.
+//
+// Mode: hooks.summarize_mode = "deterministic" (default) | "llm"
+// LLM mode falls back to deterministic on any error if fallback_to_deterministic = true.
 
 import { createDatabase } from "../db/database.js";
 import { MemoriesRepo } from "../db/memories.js";
@@ -15,6 +18,11 @@ import { summarizeAsCluster } from "../engine/compressor.js";
 import { nowIso } from "../db/database.js";
 import { randomUUID } from "node:crypto";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
+import { redactPrivate } from "../engine/privacy.js";
+import { createLlmProvider } from "../engine/llm/provider.js";
+import { buildSessionSummaryPrompt } from "../engine/llm/session-summary-prompt.js";
+import type { SummaryInput } from "../engine/llm/session-summary-prompt.js";
+import { estimateTokensV2 } from "../engine/token-estimator.js";
 
 const log = createLogger(logLevelFromEnv());
 
@@ -94,16 +102,107 @@ async function main(): Promise<void> {
     // 2+ captures → fewer than minCaptures → skip
     if (captures.length < minCaptures) process.exit(0);
 
-    // Build the summary using compressor helper
-    const compressionCfg = {
-      cluster_similarity_threshold: rawConfig.compression.clusterSimilarityThreshold,
-      min_cluster_size: rawConfig.compression.minClusterSize,
-      max_body_ratio: rawConfig.compression.maxBodyRatio,
-      temporal_window_hours: rawConfig.compression.temporalWindowHours,
-      maxBodyTokens,
-    };
+    // Build the summary using the configured mode
+    const mode = hooksConfig.summarizeMode ?? "deterministic";
+    let summaryResult: { title: string; body: string; tags: string[]; tokens_before: number; tokens_after: number; importance: number } | null = null;
+    let actualMode = mode;
+    let didFallback = false;
 
-    const summary = summarizeAsCluster(captures as any[], compressionCfg);
+    if (mode === "llm") {
+      const llmCfg = hooksConfig.sessionEndLlm;
+      const provider = createLlmProvider(llmCfg);
+
+      if (provider) {
+        try {
+          // Build the SummaryInput from captures and analytics
+          const summaryInput: SummaryInput = {
+            sessionId: claudeSessionId,
+            sessionStart: (captures[captures.length - 1] as any).created_at ?? now,
+            sessionEnd: (captures[0] as any).created_at ?? now,
+            projectName: cwd ? cwd.split("/").pop() ?? cwd : "unknown",
+            captures: (captures as any[]).map((c) => ({
+              tool: "auto-capture",
+              title: c.title ?? "",
+              body: c.body ?? "",
+              createdAt: c.created_at ?? now,
+            })),
+            decisionsCreated: [],
+            pitfallsCreated: [],
+            injections: 0,
+            budget: { spent: 0, total: rawConfig.budget.total },
+          };
+
+          const { system, user } = buildSessionSummaryPrompt(summaryInput, llmCfg.maxInputTokens);
+          const text = await provider.complete(system, user, {
+            maxOutputTokens: llmCfg.maxOutputTokens,
+            timeoutMs: llmCfg.requestTimeoutMs,
+          });
+
+          // Apply redactPrivate to LLM response in case the model echoes private content
+          const body = redactPrivate(text);
+          const dateStr = new Date().toISOString().slice(0, 10);
+          const allTags = (captures as any[]).flatMap((c) => {
+            try {
+              return Array.isArray(JSON.parse(c.tags ?? "[]")) ? JSON.parse(c.tags ?? "[]") : [];
+            } catch {
+              return [];
+            }
+          });
+          const deduped = [...new Set<string>(allTags)];
+
+          summaryResult = {
+            title: `Session summary — ${dateStr} — ${captures.length} captures (LLM)`,
+            body,
+            tags: deduped,
+            tokens_before: estimateTokensV2(user),
+            tokens_after: estimateTokensV2(body),
+            importance: Math.min(1.0, Math.max(...(captures as any[]).map((c) => c.importance_score ?? 0.5))),
+          };
+          actualMode = "llm";
+        } catch (err) {
+          log.warn(`LLM summary failed: ${err instanceof Error ? err.message : String(err)}`);
+          if (!llmCfg.fallbackToDeterministic) {
+            // Write a minimal analytics event and exit cleanly (never block session end)
+            try {
+              db.prepare(`
+                INSERT INTO analytics_events (session_id, project_id, memory_id, event_type, event_data, created_at)
+                VALUES (?, ?, ?, 'session_summary', ?, ?)
+              `).run(
+                claudeSessionId,
+                projectId ?? null,
+                null,
+                JSON.stringify({ mode: "llm", captures: captures.length, fallback: false, error: err instanceof Error ? err.message : String(err) }),
+                now
+              );
+            } catch { /* ignore analytics errors */ }
+            process.exit(0);
+          }
+          // Fallback to deterministic
+          didFallback = true;
+          actualMode = "deterministic";
+        }
+      } else {
+        // No provider key available — log and fall through to deterministic
+        log.warn(`LLM summary mode requested but ${llmCfg.apiKeyEnv} not set; falling back to deterministic`);
+        didFallback = true;
+        actualMode = "deterministic";
+      }
+    }
+
+    // Deterministic path (existing #3 implementation) — used when mode=deterministic or as fallback
+    if (summaryResult === null) {
+      const compressionCfg = {
+        cluster_similarity_threshold: rawConfig.compression.clusterSimilarityThreshold,
+        min_cluster_size: rawConfig.compression.minClusterSize,
+        max_body_ratio: rawConfig.compression.maxBodyRatio,
+        temporal_window_hours: rawConfig.compression.temporalWindowHours,
+        maxBodyTokens,
+      };
+
+      summaryResult = summarizeAsCluster(captures as any[], compressionCfg);
+    }
+
+    const summary = summaryResult;
 
     // Write the summary + optional soft-delete of sources in a single transaction
     const tx = db.transaction(() => {
@@ -148,9 +247,11 @@ async function main(): Promise<void> {
         projectId ?? null,
         summaryId,
         JSON.stringify({
-          source_count: captures.length,
-          tokens_before: summary.tokens_before,
-          tokens_after: summary.tokens_after,
+          mode: actualMode,
+          captures: captures.length,
+          input_tokens_estimate: summary.tokens_before,
+          output_tokens_estimate: summary.tokens_after,
+          fallback: didFallback,
         }),
         now
       );
