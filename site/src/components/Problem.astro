@@ -1,0 +1,28 @@
+---
+const items = [
+  { title: 'They forget why.', body: "The decision you defended in three meetings? Gone next session.",
+    icon: 'M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z' },
+  { title: 'You repeat context.', body: "Every chat starts with the same paragraph of project lore.",
+    icon: 'M3 17h18v2H3zm0-7h18v2H3zm0-7h18v2H3z' },
+  { title: 'Tokens drain.', body: "Hand-pasted memory burns context windows you'd rather spend on code.",
+    icon: 'M11 9h2v6h-2zm1-4a8 8 0 1 0 8 8 8 8 0 0 0-8-8zm0 14a6 6 0 1 1 6-6 6 6 0 0 1-6 6z' },
+];
+---
+
+<section class="container-x py-[clamp(64px,10vw,120px)] divider-dashed">
+  <div class="section-tag">// the problem</div>
+  <h2 class="text-[clamp(26px,4vw,42px)] font-bold leading-[1.12] max-w-[22ch] mb-[14px]" style="letter-spacing: -.02em;">
+    Agents are powerful. They are also <span class="grad-text">amnesiac</span>.
+  </h2>
+  <div class="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
+    {items.map((it) => (
+      <div class="card-base p-6" data-anim="fade-up">
+        <div class="mb-3 inline-flex h-[38px] w-[38px] items-center justify-center rounded-[10px] border" style="border-color: var(--color-border); background: linear-gradient(180deg, var(--color-surface-strong), var(--color-surface)); color: var(--color-accent);">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d={it.icon} /></svg>
+        </div>
+        <h3 class="text-[17px] mb-1.5">{it.title}</h3>
+        <p class="m-0 text-[14.5px]" style="color: var(--color-fg-mute);">{it.body}</p>
+      </div>
+    ))}
+  </div>
+</section>

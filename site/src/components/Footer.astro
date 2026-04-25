@@ -1,0 +1,83 @@
+---
+const docs = [
+  { label: 'Install & client setup', href: 'https://github.com/lfrmonteiro99/memento-mcp/blob/main/docs/install.md' },
+  { label: 'Importing CLAUDE.md',    href: 'https://github.com/lfrmonteiro99/memento-mcp/blob/main/docs/import.md' },
+  { label: 'Team sync',              href: 'https://github.com/lfrmonteiro99/memento-mcp/blob/main/docs/team-sync.md' },
+  { label: 'MCP tools reference',    href: 'https://github.com/lfrmonteiro99/memento-mcp/blob/main/docs/mcp-tools.md' },
+];
+
+const features = [
+  { label: 'Per-project policy',  href: 'https://github.com/lfrmonteiro99/memento-mcp/blob/main/docs/policy.md' },
+  { label: 'Optional embeddings', href: 'https://github.com/lfrmonteiro99/memento-mcp/blob/main/docs/embeddings.md' },
+  { label: 'Privacy',             href: 'https://github.com/lfrmonteiro99/memento-mcp/blob/main/docs/privacy.md' },
+  { label: 'Web inspector',       href: 'https://github.com/lfrmonteiro99/memento-mcp/blob/main/docs/web-inspector.md' },
+];
+
+const project = [
+  { label: 'GitHub', href: 'https://github.com/lfrmonteiro99/memento-mcp' },
+  { label: 'npm',    href: 'https://www.npmjs.com/package/@luispmonteiro/memento-memory-mcp' },
+  { label: 'License', href: 'https://github.com/lfrmonteiro99/memento-mcp/blob/main/LICENSE' },
+];
+
+const year = new Date().getFullYear();
+---
+
+<footer class="container-x divider-dashed pt-14 pb-10">
+  <div class="mb-9 grid gap-8 md:grid-cols-[1.6fr_repeat(3,1fr)]">
+    <div>
+      <div class="mb-[10px] inline-flex items-center gap-[10px] font-bold tracking-tight">
+        <span class="inline-flex h-7 w-7 items-center justify-center" style="color: var(--color-accent);">
+          <svg viewBox="0 0 32 32" width="20" height="20">
+            <path d="M16 2 L29 9 L29 23 L16 30 L3 23 L3 9 Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+            <circle cx="16" cy="16" r="2.4" fill="currentColor" />
+          </svg>
+        </span>
+        <span class="text-[15px]">memento<span class="font-medium" style="color: var(--color-fg-mute);">-mcp</span></span>
+      </div>
+      <p class="m-0 max-w-[32ch] text-[13.5px]" style="color: var(--color-fg-mute);">
+        Persistent memory for AI coding agents. MIT licensed.
+      </p>
+    </div>
+
+    <div>
+      <h5 class="mb-3 text-[12px] font-semibold" style="font-family: var(--font-mono); color: var(--color-fg-mute); letter-spacing: .04em;">Docs</h5>
+      <ul class="m-0 grid list-none gap-2 p-0">
+        {docs.map((l) => (
+          <li>
+            <a class="text-[14px] transition-colors" style="color: var(--color-fg-soft);" href={l.href}>{l.label}</a>
+          </li>
+        ))}
+      </ul>
+    </div>
+
+    <div>
+      <h5 class="mb-3 text-[12px] font-semibold" style="font-family: var(--font-mono); color: var(--color-fg-mute); letter-spacing: .04em;">Features</h5>
+      <ul class="m-0 grid list-none gap-2 p-0">
+        {features.map((l) => (
+          <li>
+            <a class="text-[14px] transition-colors" style="color: var(--color-fg-soft);" href={l.href}>{l.label}</a>
+          </li>
+        ))}
+      </ul>
+    </div>
+
+    <div>
+      <h5 class="mb-3 text-[12px] font-semibold" style="font-family: var(--font-mono); color: var(--color-fg-mute); letter-spacing: .04em;">Project</h5>
+      <ul class="m-0 grid list-none gap-2 p-0">
+        {project.map((l) => (
+          <li>
+            <a class="text-[14px] transition-colors" style="color: var(--color-fg-soft);" href={l.href}>{l.label}</a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </div>
+
+  <div class="flex items-center justify-between border-t border-dashed pt-[18px] text-[12px]" style="font-family: var(--font-mono); color: var(--color-fg-mute); border-color: var(--color-border);">
+    <span>© {year} Luis Monteiro</span>
+    <span class="inline-flex items-center gap-2">
+      <span class="pulse-dot"></span>
+      built local-first
+    </span>
+  </div>
+</footer>
