@@ -4,7 +4,7 @@ import Terminal from './Terminal.astro';
 const clients = ['Claude Code', 'Codex', 'Cursor', 'Any stdio-MCP client'];
 ---
 
-<section class="container-x py-[clamp(48px,9vw,96px)] text-center">
+<section id="hero" class="container-x py-[clamp(48px,9vw,96px)] text-center relative">
   <div class="inline-flex items-center gap-2 rounded-full border px-3 py-[6px] text-[12px]"
        data-anim="fade-up"
        style="font-family: var(--font-mono); color: var(--color-fg-mute); background: var(--color-surface); border-color: var(--color-border);">
@@ -22,8 +22,25 @@ const clients = ['Claude Code', 'Codex', 'Cursor', 'Any stdio-MCP client'];
     project memory — decisions, patterns, pitfalls, architecture notes, and team-shared knowledge.
   </p>
 
-  <div class="mt-7 flex flex-wrap justify-center gap-[10px]" data-anim="fade-up" data-anim-delay="180">
-    <a class="btn btn-primary" href="#install">
+  <a class="hero-savings-chip mx-auto mt-5 inline-flex items-center gap-[10px] rounded-full border px-[14px] py-[8px] text-[13px]"
+     href="#savings"
+     data-anim="fade-up"
+     data-anim-delay="160"
+     aria-label="See how Memento saves tokens">
+    <span class="hero-savings-spark" aria-hidden="true"></span>
+    <span style="font-family: var(--font-mono); color: var(--color-fg-mute);">saves</span>
+    <span class="grad-text font-bold tabular-nums" data-hero-count="2340">0</span>
+    <span class="font-semibold" style="color: var(--color-fg);">tokens / session</span>
+    <span style="color: var(--color-fg-mute);">·</span>
+    <span class="grad-text font-bold tabular-nums" data-hero-count="940000">0</span>
+    <span style="font-family: var(--font-mono); color: var(--color-fg-mute);">/mo for 5-dev teams</span>
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="color: var(--color-fg-mute);">
+      <path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  </a>
+
+  <div class="mt-7 flex flex-wrap justify-center gap-[10px]" data-anim="fade-up" data-anim-delay="200">
+    <a class="btn btn-primary" id="hero-cta-install" href="#install">
       <span>Install</span>
       <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
         <path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
@@ -52,3 +69,58 @@ const clients = ['Claude Code', 'Codex', 'Cursor', 'Any stdio-MCP client'];
     ))}
   </ul>
 </section>
+
+<script>
+  import { animate } from 'motion';
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const fmt = new Intl.NumberFormat();
+
+  // Hero savings chip count-up — fires on load (above the fold)
+  document.querySelectorAll<HTMLElement>('[data-hero-count]').forEach((el, i) => {
+    const to = Number(el.dataset.heroCount);
+    if (reduced) { el.textContent = fmt.format(to); return; }
+    el.textContent = '0';
+    const dur = to >= 100_000 ? 1.6 : 1.2;
+    animate(0, to, {
+      duration: dur,
+      delay: 0.45 + i * 0.15,
+      ease: [0.2, 0.7, 0.2, 1],
+      onUpdate: (v: number) => { el.textContent = fmt.format(Math.round(v)); },
+    });
+  });
+
+  // Magnetic primary CTA
+  const cta = document.getElementById('hero-cta-install');
+  if (cta && !reduced && window.matchMedia('(hover: hover)').matches) {
+    let raf = 0;
+    cta.addEventListener('pointermove', (e: PointerEvent) => {
+      const r = cta.getBoundingClientRect();
+      const dx = e.clientX - (r.left + r.width / 2);
+      const dy = e.clientY - (r.top + r.height / 2);
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        animate(
+          cta,
+          { x: dx * 0.18, y: dy * 0.28 },
+          { type: 'spring', stiffness: 280, damping: 22, mass: 0.6 }
+        );
+      });
+    });
+    cta.addEventListener('pointerleave', () => {
+      animate(cta, { x: 0, y: 0 }, { type: 'spring', stiffness: 200, damping: 20 });
+    });
+  }
+
+  // Cursor-tracking spotlight on hero
+  const hero = document.getElementById('hero');
+  if (hero && !reduced) {
+    hero.addEventListener('pointermove', (e: PointerEvent) => {
+      const r = hero.getBoundingClientRect();
+      const x = ((e.clientX - r.left) / r.width) * 100;
+      const y = ((e.clientY - r.top) / r.height) * 100;
+      hero.style.setProperty('--hx', x + '%');
+      hero.style.setProperty('--hy', y + '%');
+    });
+  }
+</script>
