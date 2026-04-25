@@ -301,16 +301,19 @@ Read more: [Mode profiles](docs/mode-profiles.md)
 
 ### Automatic context injection and capture
 
-Memory tools (`memory_store`, `memory_search`, `decisions_log`, …) work in any stdio-MCP client. Automatic injection and capture use whatever extension mechanism the client provides.
+Memory tools (`memory_store`, `memory_search`, `decisions_log`, …) work in any stdio-MCP client. Automatic injection and capture use whatever extension mechanism the client provides — most major clients now expose lifecycle hooks.
 
-| Client | MCP tools | Auto-inject on prompt | Auto-capture after tools | End-of-session summary |
-| --- | :---: | :---: | :---: | :---: |
-| Claude Code | yes (native hooks) | yes (native hooks) | yes (native hooks) | yes (native hooks) |
-| Cursor | yes | via `.cursorrules` | n/a (no per-tool hook) | via rule + manual `/summarize` |
-| Codex | yes | via `AGENTS.md` | n/a (no per-tool hook) | via rule + manual `/summarize` |
-| Other stdio-MCP | yes | depends on client rules format | depends on client | depends on client |
+| Client | MCP tools | Hooks | Hooks since |
+| --- | :---: | :---: | :---: |
+| Claude Code | yes | yes (native) | shipped with Claude Code |
+| Cursor | yes | yes (native) | 1.7 (Oct 2025) |
+| Codex | yes | yes (native, opt-in flag) | 0.114.0 (Mar 2026) |
+| Gemini CLI | yes | yes (native) | 0.26.0 (Jan 2026) |
+| Cline | yes | yes (native) | 3.36.0 (late 2025) |
+| Aider | yes | no — rule-file fallback only | — |
+| Other stdio-MCP | yes | depends on client | — |
 
-Only Claude Code currently exposes deterministic lifecycle hooks. Other clients steer the agent through rule files (`.cursorrules`, `AGENTS.md`, system prompts), which is best-effort rather than guaranteed.
+Each client's hook event names and config format differ (e.g. Claude Code uses `UserPromptSubmit`, Cursor uses `beforeSubmitPrompt`, Cline filenames the events). The four `memento-hook-*` binaries were built for Claude Code's stdin payload shape; they work directly on Codex (very similar payload), and may need a light adapter on Cursor, Gemini CLI, and Cline. For clients without hooks, fall back to a rule file (`AGENTS.md`, `.cursor/rules/*.mdc`, system prompt) telling the agent to call the memory tools itself.
 
 Read more: [Installation & client setup](docs/install.md)
 
