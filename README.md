@@ -8,7 +8,7 @@
 
 ### Persistent memory for AI coding agents.
 
-A local-first MCP server that gives **Claude Code**, **Codex**, **Cursor**, and any stdio-MCP client durable project memory: facts, decisions, patterns, architecture notes, pitfalls, session summaries, and team-shared knowledge.
+A local-first MCP server that gives **Claude Code**, **Codex**, **Cursor**, and any stdio-MCP client durable project memory: facts, decisions, patterns, architecture notes, pitfalls, session summaries, and team-shared knowledge — while cutting **thousands of tokens of repeated context** out of every single session.
 
 <br />
 
@@ -25,7 +25,7 @@ A local-first MCP server that gives **Claude Code**, **Codex**, **Cursor**, and 
 > [!NOTE]
 > AI coding agents are powerful, but they forget. They forget why a decision was made, which migration broke production, which convention your project follows, and which workaround saved you three hours last week.
 >
-> **`memento-mcp` fixes that.**
+> **`memento-mcp` fixes that — and stops your agent burning thousands of tokens re-reading the same context every session.**
 
 It stores structured memories locally in SQLite, retrieves the right context when your agent needs it, and can sync selected team memories through git. No hosted vector database. No mandatory cloud account. No mystery SaaS quietly eating your project history.
 
@@ -153,13 +153,49 @@ Then it injects the relevant context back into your agent at the right time, wit
 
 ## Why use it
 
-### Stop repeating project context
+### Save tokens. A lot of them.
 
-Import your existing `CLAUDE.md`, store typed memories, and let your MCP client retrieve the useful bits automatically.
+Without persistent memory, every new session starts blind:
+
+- `CLAUDE.md` is re-pasted or stuffed into the system prompt
+- Architectural decisions are re-explained mid-conversation
+- Last week's pitfall is re-discovered the hard way
+- "What were we doing yesterday?" eats hundreds of tokens before any actual work happens
+
+`memento-mcp` imports that context **once** and serves back only the slice the current prompt needs — using [progressive disclosure](docs/search.md) that prefers cheap index/summary layers over full bodies.
 
 ```bash
 memento-mcp import claude-md
 ```
+
+#### Conservative per-session savings
+
+| Where the tokens go | Without memento | With memento | Saved |
+| :--- | ---: | ---: | ---: |
+| `CLAUDE.md` re-injected | ~1,500 t | imported once → 0 t | **~1,500 t** |
+| Architecture re-explained mid-chat | ~500 t | 1 retrieved decision (~80 t) | **~420 t** |
+| Pitfall re-discovered | ~300 t | 1 retrieved pitfall (~80 t) | **~220 t** |
+| "What were we doing?" recap | ~400 t | 1 session summary (~200 t) | **~200 t** |
+| **Total prelude per session** | **~2,700 t** | **~360 t** | **~2,340 t** |
+
+> [!NOTE]
+> Numbers are deliberately conservative. Real-world `CLAUDE.md` files routinely reach 3-5k tokens, and longer-running projects accumulate dozens of decisions and pitfalls. Savings scale with project age.
+
+#### Scaled out
+
+| Cadence | Sessions / month | Tokens saved (conservative) |
+| :--- | ---: | ---: |
+| Solo dev, ~4 sessions/day | ~80 | **~190,000** |
+| 5-person team, same cadence | ~400 | **~940,000** |
+
+Three things you get back, for free:
+
+1. **Latency** — the agent stops chewing through thousands of prelude tokens before responding.
+2. **Context budget** — that ~2,300 tokens of saved prelude is ~2,300 tokens you can spend on actual code, longer files, or richer reasoning.
+3. **Cost** — every saved token is one you don't pay for, on every session, on every machine, on every teammate.
+
+> [!TIP]
+> Compounding effect: when embeddings are enabled, [write-time dedup](docs/embeddings.md#smart-write-time-dedup) keeps the memory store lean, and [adaptive ranking](docs/search.md) surfaces only high-utility memories — so the *retrieved* tokens are higher-signal too.
 
 ### Keep decisions close to the code
 
