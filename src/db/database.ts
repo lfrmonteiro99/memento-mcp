@@ -327,6 +327,27 @@ INSERT INTO decisions_fts(decisions_fts) VALUES('rebuild');
       }
     },
   },
+  {
+    version: 7,
+    name: "sync_state",
+    sql: `
+CREATE TABLE IF NOT EXISTS sync_state (
+  project_id   TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  last_pull_at TEXT,
+  last_push_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sync_file_hashes (
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  memory_id  TEXT NOT NULL,
+  hash       TEXT NOT NULL,
+  checked_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (project_id, memory_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_file_hashes_project ON sync_file_hashes(project_id);
+`,
+  },
 ];
 
 const FTS_TRIGGERS_SQL = `

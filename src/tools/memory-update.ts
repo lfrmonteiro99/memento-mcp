@@ -1,4 +1,5 @@
 // src/tools/memory-update.ts
+import type Database from "better-sqlite3";
 import type { MemoriesRepo } from "../db/memories.js";
 import type { EmbeddingsRepo } from "../db/embeddings.js";
 import type { Config } from "../lib/config.js";
@@ -6,6 +7,7 @@ import { createProvider } from "../engine/embeddings/provider.js";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
 import { validateTags } from "../engine/privacy.js";
 import { loadProjectPolicy } from "../lib/policy.js";
+import { pushSingleMemory } from "../sync/git-sync.js";
 
 const logger = createLogger(logLevelFromEnv());
 
@@ -23,6 +25,7 @@ export async function handleMemoryUpdate(
   },
   config?: Config,
   embRepo?: EmbeddingsRepo,
+  db?: Database.Database,
 ): Promise<string> {
   // Issue #4: validate balanced <private> tags when content is provided.
   if (params.content !== undefined) {
@@ -84,6 +87,19 @@ export async function handleMemoryUpdate(
         provider.embed([`${updated.title}\n\n${updated.body ?? ""}`])
           .then(([v]) => embRepo.upsert(params.memory_id, provider.model, v))
           .catch(err => logger.warn(`embed failed for ${params.memory_id}: ${err}`));
+      }
+    }
+  }
+
+  // Issue #11: auto-push updated memory when scope=team and autoPushOnStore=true
+  if (db && config && config.sync.enabled && config.sync.autoPushOnStore) {
+    const updated = repo.getById(params.memory_id);
+    if (updated && updated.scope === "team") {
+      const projectPath = params.project_path || process.cwd();
+      try {
+        await pushSingleMemory(db, projectPath, params.memory_id, config.sync);
+      } catch (e) {
+        logger.warn(`sync auto-push failed for memory ${params.memory_id}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   }

@@ -9,6 +9,7 @@ import { createProvider } from "../engine/embeddings/provider.js";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
 import { validateTags } from "../engine/privacy.js";
 import { loadProjectPolicy } from "../lib/policy.js";
+import { pushSingleMemory } from "../sync/git-sync.js";
 
 const logger = createLogger(logLevelFromEnv());
 
@@ -76,6 +77,15 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
     importance: params.importance, supersedesId: params.supersedes_id,
     pin: params.pin,
   });
+
+  // Issue #11: auto-push to file when scope=team and autoPushOnStore=true
+  if (db && config && config.sync.enabled && config.sync.autoPushOnStore && (params.scope === "team")) {
+    try {
+      await pushSingleMemory(db, projectPath, id, config.sync);
+    } catch (e) {
+      logger.warn(`sync auto-push failed for memory ${id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   // Fire-and-forget embedding — do NOT await, store must remain fast.
   if (config && embRepo) {

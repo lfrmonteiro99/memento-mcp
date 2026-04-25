@@ -136,6 +136,7 @@
   }
   .badge.pinned { background: var(--pin); color: #000; }
   .badge.summary { background: var(--accent); color: #fff; }
+  .badge.team { background: #2ea44f; color: #fff; }
   .pagination {
     display: flex;
     gap: 8px;
@@ -211,6 +212,7 @@
   <button data-tab="sessions">Sessions</button>
   <button data-tab="projects">Projects</button>
   <button data-tab="analytics">Analytics</button>
+  <button data-tab="sync">Sync</button>
 </nav>
 <main id="main"></main>
 <div id="panel" class="panel" aria-hidden="true">
@@ -228,6 +230,7 @@ let state = {
   sessions: { offset: 0, limit: 20, total: 0 },
   projects: { offset: 0, limit: 50, total: 0 },
   analytics: { days: 7 },
+  sync: { project: "" },
 };
 
 async function api(path, opts) {

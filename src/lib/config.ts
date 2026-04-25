@@ -34,8 +34,18 @@ export interface SessionEndLlmConfig {
   fallbackToDeterministic: boolean;
 }
 
+export interface SyncConfig {
+  enabled: boolean;
+  autoPushOnStore: boolean;
+  folder: string;
+  includePrivateInFiles: boolean;
+  maxFutureDriftHours: number;
+  schemaVersion: number;
+}
+
 export interface Config {
   budget: { total: number; floor: number; refill: number; sessionTimeout: number };
+  sync: SyncConfig;
   search: {
     defaultDetail: "index" | "summary" | "full";
     maxResults: number;
@@ -133,8 +143,18 @@ export const DEFAULT_VAULT_CONFIG: VaultConfig = {
   autoPromoteTypes: [],
 };
 
+export const DEFAULT_SYNC_CONFIG: SyncConfig = {
+  enabled: true,
+  autoPushOnStore: false,
+  folder: ".memento",
+  includePrivateInFiles: false,
+  maxFutureDriftHours: 24,
+  schemaVersion: 1,
+};
+
 export const DEFAULT_CONFIG: Config = {
   budget: { total: 8000, floor: 500, refill: 200, sessionTimeout: 1800 },
+  sync: { ...DEFAULT_SYNC_CONFIG },
   search: {
     defaultDetail: "index",
     maxResults: 10,
@@ -382,6 +402,15 @@ export function loadConfig(configPath: string): Config {
   if (toml.file_memory) {
     if (toml.file_memory.cache_ttl_seconds != null) config.fileMemory.cacheTtlSeconds = Number(toml.file_memory.cache_ttl_seconds);
     if (toml.file_memory.enabled != null) config.fileMemory.enabled = Boolean(toml.file_memory.enabled);
+  }
+  if (toml.sync) {
+    const s = toml.sync;
+    if (s.enabled != null) config.sync.enabled = Boolean(s.enabled);
+    if (s.auto_push_on_store != null) config.sync.autoPushOnStore = Boolean(s.auto_push_on_store);
+    if (s.folder) config.sync.folder = String(s.folder);
+    if (s.include_private_in_files != null) config.sync.includePrivateInFiles = Boolean(s.include_private_in_files);
+    if (s.max_future_drift_hours != null) config.sync.maxFutureDriftHours = Number(s.max_future_drift_hours);
+    if (s.schema_version != null) config.sync.schemaVersion = Number(s.schema_version);
   }
   if (toml.profile) {
     const p = toml.profile;

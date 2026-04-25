@@ -617,6 +617,107 @@ This file describes the vault layout for memento-mcp routing.
     process.exit(1);
   }
 
+} else if (command === "sync") {
+  // Issue #11: git-backed sync for team-scoped memories
+  const { loadConfig, getDefaultConfigPath, getDefaultDbPath } = await import("../lib/config.js");
+  const { createDatabase } = await import("../db/database.js");
+  const config = loadConfig(getDefaultConfigPath());
+
+  if (!config.sync.enabled) {
+    console.error("Sync is disabled in config (sync.enabled = false). Enable it in your config.toml.");
+    process.exit(1);
+  }
+
+  const args = argv.slice(3);
+  let projectRoot = process.cwd();
+  let dryRun = false;
+
+  // Parse common flags
+  for (let i = 0; i < args.length; i++) {
+    if ((args[i] === "--project" || args[i] === "-p") && args[i + 1]) {
+      projectRoot = args[++i];
+    } else if (args[i] === "--dry-run") {
+      dryRun = true;
+    }
+  }
+
+  if (sub === "init") {
+    const { init } = await import("../sync/git-sync.js");
+    init(projectRoot, config.sync.folder);
+    console.log(`Initialized .memento/ in ${projectRoot}`);
+    console.log(`  Created: ${config.sync.folder}/memories/`);
+    console.log(`  Created: ${config.sync.folder}/README.md`);
+    console.log(`  Created: ${config.sync.folder}/.gitignore (if new)`);
+    console.log(``);
+    console.log(`Next steps:`);
+    console.log(`  git add .memento && git commit -m "chore: init memento sync"`);
+
+  } else if (sub === "push") {
+    const { push } = await import("../sync/git-sync.js");
+    const db = createDatabase(config.database.path || getDefaultDbPath());
+    try {
+      const result = await push({ db, projectRoot, dryRun, config: config.sync });
+      if (dryRun) {
+        console.log(`Dry run — would write ${result.written} file(s), ${result.deleted} delete(s), ${result.skipped} unchanged.`);
+      } else {
+        console.log(`Pushed: ${result.written} written, ${result.deleted} deleted, ${result.skipped} unchanged.`);
+      }
+    } finally {
+      db.close();
+    }
+
+  } else if (sub === "pull") {
+    const { pull } = await import("../sync/git-sync.js");
+    const db = createDatabase(config.database.path || getDefaultDbPath());
+    try {
+      const result = await pull({ db, projectRoot, dryRun, config: config.sync });
+      if (dryRun) {
+        console.log(`Dry run — would create ${result.created}, update ${result.updated}, skip ${result.skipped}.`);
+      } else {
+        console.log(`Pulled ${result.created + result.updated} memories: ${result.created} created, ${result.updated} updated, ${result.skipped} unchanged.`);
+      }
+      if (result.warnings.length > 0) {
+        console.warn(`Warnings (${result.warnings.length}):`);
+        for (const w of result.warnings) console.warn(`  ${w}`);
+      }
+    } finally {
+      db.close();
+    }
+
+  } else if (sub === "status") {
+    const { status } = await import("../sync/git-sync.js");
+    const db = createDatabase(config.database.path || getDefaultDbPath());
+    try {
+      const s = status(db, projectRoot, config.sync.folder);
+      console.log(`Sync status for ${projectRoot}:`);
+      console.log(`  In sync:     ${s.inSync}`);
+      console.log(`  File only:   ${s.fileOnly.length}`);
+      console.log(`  DB only:     ${s.dbOnly.length}`);
+      console.log(`  Conflicting: ${s.conflicting.length}`);
+      if (s.fileOnly.length > 0) {
+        console.log(`\nFile only (run 'sync pull' to import):`);
+        for (const id of s.fileOnly) console.log(`  ${id}`);
+      }
+      if (s.dbOnly.length > 0) {
+        console.log(`\nDB only (run 'sync push' to export):`);
+        for (const id of s.dbOnly) console.log(`  ${id}`);
+      }
+      if (s.conflicting.length > 0) {
+        console.log(`\nConflicting (last-write-wins on pull):`);
+        for (const c of s.conflicting) {
+          console.log(`  ${c.id}  db=${c.dbUpdatedAt}  file=${c.fileUpdatedAt}`);
+        }
+      }
+    } finally {
+      db.close();
+    }
+
+  } else {
+    console.error(`Unknown sync command: ${sub ?? "(none)"}`);
+    console.error("Usage: memento-mcp sync <init|push|pull|status> [--project <path>] [--dry-run]");
+    process.exit(1);
+  }
+
 } else if (command === "--version" || command === "-v") {
   console.log("memento-mcp v1.0.0");
 

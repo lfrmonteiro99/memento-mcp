@@ -433,6 +433,21 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, opts: 
       return json(res, 200, { id, deleted: true });
     }
 
+    // GET /api/sync/status?project=<path>
+    if (path === "/api/sync/status" && method === "GET") {
+      const projectPath = q.get("project") ?? null;
+      if (!projectPath) return err(res, 400, "project param required");
+
+      try {
+        const { status: syncStatus } = await import("../sync/git-sync.js");
+        const folder = (opts.config as any)?.sync?.folder ?? ".memento";
+        const s = syncStatus(db, projectPath, folder);
+        return json(res, 200, s);
+      } catch (e) {
+        return err(res, 500, `sync status error: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
     return err(res, 404, "not found");
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

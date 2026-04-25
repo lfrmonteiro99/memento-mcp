@@ -65,6 +65,12 @@ export interface SessionSummaryStats {
   fallback: number;
 }
 
+export interface SyncStats {
+  pushes: number;
+  pulls: number;
+  conflicts: number;
+}
+
 export interface AnalyticsReport {
   period: string;
   session_count: number;
@@ -92,6 +98,7 @@ export interface AnalyticsReport {
     by_detail: Record<string, number>;
   };
   session_summary_stats?: SessionSummaryStats;
+  sync_stats?: SyncStats;
 }
 
 export function periodToSqlClause(period: string): string {
@@ -225,6 +232,27 @@ export function generateReport(db: Database.Database, projectId: string | null, 
   }
   const totalSummaries = llmSummaries + deterministicSummaries;
 
+  // Sync stats
+  const syncPushRows = db.prepare(`
+    SELECT COUNT(*) as cnt FROM analytics_events
+    WHERE ${projSql} AND event_type = 'sync_push' ${clause}
+  `).get(...projBind) as { cnt: number };
+
+  const syncPullRows = db.prepare(`
+    SELECT COUNT(*) as cnt FROM analytics_events
+    WHERE ${projSql} AND event_type = 'sync_pull' ${clause}
+  `).get(...projBind) as { cnt: number };
+
+  const syncConflictRows = db.prepare(`
+    SELECT COALESCE(SUM(json_extract(event_data, '$.conflicts')), 0) as total
+    FROM analytics_events
+    WHERE ${projSql} AND event_type = 'sync_pull' ${clause}
+  `).get(...projBind) as { total: number };
+
+  const totalSyncPushes = syncPushRows.cnt;
+  const totalSyncPulls = syncPullRows.cnt;
+  const totalSyncConflicts = syncConflictRows.total ?? 0;
+
   return {
     period,
     session_count: sessionStats.session_count,
@@ -256,6 +284,11 @@ export function generateReport(db: Database.Database, projectId: string | null, 
       llm: llmSummaries,
       deterministic: deterministicSummaries,
       fallback: fallbackSummaries,
+    } : undefined,
+    sync_stats: (totalSyncPushes > 0 || totalSyncPulls > 0) ? {
+      pushes: totalSyncPushes,
+      pulls: totalSyncPulls,
+      conflicts: totalSyncConflicts,
     } : undefined,
   };
 }
