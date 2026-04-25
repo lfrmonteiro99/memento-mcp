@@ -19,6 +19,7 @@ import { classifyPrompt } from "../../src/lib/classify.js";
 import { daysSince, getDecayFactor, applyDecay } from "../../src/lib/decay.js";
 import { formatIndex, formatFull, formatDetail } from "../../src/lib/formatter.js";
 import { DEFAULT_CONFIG } from "../../src/lib/config.js";
+import { ENGLISH_PROFILE } from "../../src/lib/profiles.js";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -195,10 +196,10 @@ describe("v1 regression: library contracts", () => {
   });
 
   it("classifyPrompt categories are stable", () => {
-    expect(classifyPrompt("ok", DEFAULT_CONFIG)).toBe("trivial");
-    expect(classifyPrompt("how do React hooks work?", DEFAULT_CONFIG)).toBe("standard");
-    expect(classifyPrompt("x".repeat(200), DEFAULT_CONFIG)).toBe("complex");
-    expect(classifyPrompt("look at /home/user/file.ts and fix the issue", DEFAULT_CONFIG)).toBe("complex");
+    expect(classifyPrompt("ok", DEFAULT_CONFIG, ENGLISH_PROFILE)).toBe("trivial");
+    expect(classifyPrompt("how do React hooks work?", DEFAULT_CONFIG, ENGLISH_PROFILE)).toBe("standard");
+    expect(classifyPrompt("x".repeat(200), DEFAULT_CONFIG, ENGLISH_PROFILE)).toBe("complex");
+    expect(classifyPrompt("look at /home/user/file.ts and fix the issue", DEFAULT_CONFIG, ENGLISH_PROFILE)).toBe("complex");
   });
 
   it("decay factors match v1 step function", () => {

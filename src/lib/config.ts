@@ -4,6 +4,13 @@ import { homedir, platform } from "node:os";
 import { parse as parseTOML } from "smol-toml";
 import { createLogger, logLevelFromEnv } from "./logger.js";
 
+export interface ProfileConfig {
+  id: string;
+  extraStopWords: string[];
+  extraTrivialPatterns: string[];
+  locale: string;
+}
+
 export interface VaultConfig {
   enabled: boolean;
   path: string;
@@ -36,6 +43,7 @@ export interface Config {
   };
   pruning: { enabled: boolean; maxAgeDays: number; minImportance: number; intervalHours: number };
   database: { path: string };
+  profile: ProfileConfig;
   vault: VaultConfig;
   decay: { type: "exponential" | "step"; halfLifeDays: number };
   autoCapture: {
@@ -117,6 +125,12 @@ export const DEFAULT_CONFIG: Config = {
   },
   pruning: { enabled: true, maxAgeDays: 60, minImportance: 0.3, intervalHours: 24 },
   database: { path: "" },
+  profile: {
+    id: "english",
+    extraStopWords: [],
+    extraTrivialPatterns: [],
+    locale: "",
+  },
   vault: { ...DEFAULT_VAULT_CONFIG },
   decay: { type: "exponential", halfLifeDays: 14 },
   autoCapture: {
@@ -286,6 +300,13 @@ export function loadConfig(configPath: string): Config {
   if (toml.file_memory) {
     if (toml.file_memory.cache_ttl_seconds != null) config.fileMemory.cacheTtlSeconds = Number(toml.file_memory.cache_ttl_seconds);
     if (toml.file_memory.enabled != null) config.fileMemory.enabled = Boolean(toml.file_memory.enabled);
+  }
+  if (toml.profile) {
+    const p = toml.profile;
+    if (p.id) config.profile.id = String(p.id);
+    if (Array.isArray(p.extra_stop_words)) config.profile.extraStopWords = p.extra_stop_words.map(String);
+    if (Array.isArray(p.extra_trivial_patterns)) config.profile.extraTrivialPatterns = p.extra_trivial_patterns.map(String);
+    if (p.locale) config.profile.locale = String(p.locale);
   }
 
   return applyEnvOverrides(config);

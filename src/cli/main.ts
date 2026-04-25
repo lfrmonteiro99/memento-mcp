@@ -157,6 +157,37 @@ This file describes the vault layout for memento-mcp routing.
     process.exit(1);
   }
 
+} else if (command === "profile") {
+  const { loadConfig, getDefaultConfigPath } = await import("../lib/config.js");
+  const { resolveProfile } = await import("../lib/profiles.js");
+
+  const config = loadConfig(getDefaultConfigPath());
+  const profile = resolveProfile(config);
+
+  if (sub === "--dump") {
+    console.log(`Profile: ${profile.id}`);
+    console.log(`Stop-words: ${profile.stopWords.size}`);
+    console.log("");
+    console.log("Stop-word list:");
+    const sortedStopWords = Array.from(profile.stopWords).sort();
+    for (let i = 0; i < sortedStopWords.length; i += 5) {
+      console.log(`  ${sortedStopWords.slice(i, i + 5).join(", ")}`);
+    }
+    console.log("");
+    console.log("Trivial patterns:");
+    for (const pattern of profile.trivialPatterns) {
+      console.log(`  ${pattern}`);
+    }
+    if (profile.locale) {
+      console.log("");
+      console.log(`Locale: ${profile.locale}`);
+    }
+  } else {
+    console.log(`id: ${profile.id}`);
+    console.log(`stop-words: ${profile.stopWords.size}`);
+    console.log(`trivial-patterns: ${profile.trivialPatterns.length}`);
+  }
+
 } else if (command === "--version" || command === "-v") {
   console.log("memento-mcp v1.0.0");
 

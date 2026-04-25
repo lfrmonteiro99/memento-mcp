@@ -10,6 +10,7 @@ import { daysSince, computeExponentialDecay } from "../lib/decay.js";
 import { extractKeywordsV2, buildFtsQueryV2 } from "../engine/keyword-extractor.js";
 import { computeAdaptiveScore, computeUtilityScore } from "../engine/adaptive-ranker.js";
 import type { Config } from "../lib/config.js";
+import { resolveProfile } from "../lib/profiles.js";
 import { searchVault } from "../engine/vault-router.js";
 
 const TIER_LIMITS = { trivial: 0, standard: 3, complex: 5 };
@@ -25,7 +26,8 @@ export function processSearchHook(
 ): string {
   if (!prompt) return "";
 
-  const tier = config.hooks.trivialSkip ? classifyPrompt(prompt, config) : "standard";
+  const profile = resolveProfile(config);
+  const tier = config.hooks.trivialSkip ? classifyPrompt(prompt, config, profile) : "standard";
   let maxResults = TIER_LIMITS[tier];
   if (maxResults === 0) return "";
 
@@ -45,6 +47,7 @@ export function processSearchHook(
     maxTokens: 8,
     preservePhrases: true,
     minWordLength: 3,
+    stopWords: profile.stopWords,
   });
   if (keywords.length < 2) return "";
 

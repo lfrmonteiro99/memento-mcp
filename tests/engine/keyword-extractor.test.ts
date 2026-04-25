@@ -1,10 +1,13 @@
 // tests/engine/keyword-extractor.test.ts
 import { describe, it, expect } from "vitest";
 import { extractKeywordsV2, buildFtsQueryV2 } from "../../src/engine/keyword-extractor.js";
+import { ENGLISH_PROFILE, PORTUGUESE_PROFILE } from "../../src/lib/profiles.js";
 
 describe("extractKeywordsV2", () => {
   it("removes stop words", () => {
-    const kws = extractKeywordsV2("the quick brown fox is jumping over the lazy dog");
+    const kws = extractKeywordsV2("the quick brown fox is jumping over the lazy dog", {
+      stopWords: ENGLISH_PROFILE.stopWords,
+    });
     expect(kws).not.toContain("the");
     expect(kws).not.toContain("is");
     expect(kws).not.toContain("over");
@@ -13,7 +16,9 @@ describe("extractKeywordsV2", () => {
   });
 
   it("removes dev-specific stop words", () => {
-    const kws = extractKeywordsV2("function that returns a new class import");
+    const kws = extractKeywordsV2("function that returns a new class import", {
+      stopWords: ENGLISH_PROFILE.stopWords,
+    });
     expect(kws).not.toContain("function");
     expect(kws).not.toContain("class");
     expect(kws).not.toContain("import");
@@ -21,33 +26,48 @@ describe("extractKeywordsV2", () => {
   });
 
   it("respects maxTokens limit (default 8)", () => {
-    const kws = extractKeywordsV2("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima");
+    const kws = extractKeywordsV2("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima", {
+      stopWords: ENGLISH_PROFILE.stopWords,
+    });
     expect(kws.length).toBeLessThanOrEqual(8);
   });
 
   it("filters words shorter than minWordLength (3)", () => {
-    const kws = extractKeywordsV2("go do it now or be bad");
+    const kws = extractKeywordsV2("go do it now or be bad", {
+      stopWords: ENGLISH_PROFILE.stopWords,
+    });
     expect(kws.length).toBe(0);
   });
 
   it("preserves bigram phrases when preservePhrases is true", () => {
-    const kws = extractKeywordsV2("authentication flow setup", { preservePhrases: true });
+    const kws = extractKeywordsV2("authentication flow setup", {
+      preservePhrases: true,
+      stopWords: ENGLISH_PROFILE.stopWords,
+    });
     expect(kws).toContain("authentication flow");
   });
 
   it("does not produce phrases when preservePhrases is false", () => {
-    const kws = extractKeywordsV2("authentication flow setup", { preservePhrases: false });
+    const kws = extractKeywordsV2("authentication flow setup", {
+      preservePhrases: false,
+      stopWords: ENGLISH_PROFILE.stopWords,
+    });
     expect(kws.every(k => !k.includes(" "))).toBe(true);
   });
 
   it("ranks earlier words higher", () => {
-    const kws = extractKeywordsV2("important crucial trivial negligible");
+    const kws = extractKeywordsV2("important crucial trivial negligible", {
+      stopWords: ENGLISH_PROFILE.stopWords,
+    });
     // "important" should appear before "negligible" since it's earlier
     expect(kws.indexOf("important")).toBeLessThan(kws.indexOf("negligible"));
   });
 
   it("ranks phrases higher than single words", () => {
-    const kws = extractKeywordsV2("authentication flow process handler", { preservePhrases: true });
+    const kws = extractKeywordsV2("authentication flow process handler", {
+      preservePhrases: true,
+      stopWords: ENGLISH_PROFILE.stopWords,
+    });
     // The phrase "authentication flow" should be ranked high
     const phraseIdx = kws.indexOf("authentication flow");
     expect(phraseIdx).toBeGreaterThanOrEqual(0);
@@ -55,15 +75,17 @@ describe("extractKeywordsV2", () => {
   });
 
   it("handles empty input", () => {
-    expect(extractKeywordsV2("")).toEqual([]);
+    expect(extractKeywordsV2("", { stopWords: ENGLISH_PROFILE.stopWords })).toEqual([]);
   });
 
   it("handles input of only stop words", () => {
-    expect(extractKeywordsV2("the is of in for")).toEqual([]);
+    expect(extractKeywordsV2("the is of in for", { stopWords: ENGLISH_PROFILE.stopWords })).toEqual([]);
   });
 
   it("normalizes case", () => {
-    const kws = extractKeywordsV2("React Hooks and STATE management");
+    const kws = extractKeywordsV2("React Hooks and STATE management", {
+      stopWords: ENGLISH_PROFILE.stopWords,
+    });
     expect(kws).toContain("react");
     expect(kws).toContain("hooks");
     expect(kws).toContain("state");
