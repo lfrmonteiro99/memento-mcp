@@ -3,6 +3,10 @@ import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { nowIso } from "./database.js";
 import { hasPrivate } from "../engine/privacy.js";
+import { scrubSecrets } from "../engine/text-utils.js";
+import { createLogger, logLevelFromEnv } from "../lib/logger.js";
+
+const logger = createLogger(logLevelFromEnv());
 
 function sanitizeFtsToken(token: string): string {
   return token.replace(/"/g, '""');
@@ -83,10 +87,21 @@ export class MemoriesRepo {
         .run(now, params.supersedesId);
     }
 
+    // Issue #12: scrub secrets from title and body before writing to DB.
+    const cleanTitle = scrubSecrets(params.title);
+    const cleanBody = scrubSecrets(params.body ?? "");
+    if (cleanTitle !== params.title) {
+      logger.warn(`Secret pattern detected and scrubbed in memory title (id=${id})`);
+    }
+    // Issue #4: warn if title contains private tags (tags don't redact in titles).
+    if (hasPrivate(params.title)) {
+      logger.warn(`Warning: <private> tags detected in memory title — tags do not redact in titles. Move sensitive content to body. (id=${id})`);
+    }
+
     // M5: source column included in the INSERT. Defaults to 'user' if not provided.
     // Issue #3: claude_session_id column added in migration v5.
     // Issue #4: has_private column added in migration v6.
-    const hasPrivateFlag = hasPrivate(params.body ?? "") ? 1 : 0;
+    const hasPrivateFlag = hasPrivate(cleanBody) ? 1 : 0;
     this.db.prepare(`
       INSERT INTO memories (id, project_id, memory_type, scope, title, body, tags,
                             importance_score, is_pinned, supersedes_memory_id, source,
@@ -94,7 +109,7 @@ export class MemoriesRepo {
                             created_at, updated_at, last_accessed_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, projectId, params.memoryType ?? "fact", params.scope ?? "project",
-           params.title, params.body, tagsStr, params.importance ?? 0.5,
+           cleanTitle, cleanBody, tagsStr, params.importance ?? 0.5,
            params.pin ? 1 : 0, params.supersedesId || null, params.source ?? "user",
            params.claudeSessionId ?? null, hasPrivateFlag,
            now, now, now);
@@ -228,8 +243,23 @@ export class MemoriesRepo {
 
     const fields: string[] = [];
     const values: any[] = [];
-    if (patch.title !== undefined) { fields.push("title = ?"); values.push(patch.title); }
-    if (patch.body !== undefined) { fields.push("body = ?"); values.push(patch.body); }
+    // Issue #12: scrub secrets from title and body at write time.
+    if (patch.title !== undefined) {
+      const cleanTitle = scrubSecrets(patch.title);
+      if (cleanTitle !== patch.title) {
+        logger.warn(`Secret pattern detected and scrubbed in memory title during update (id=${id})`);
+      }
+      if (hasPrivate(patch.title)) {
+        logger.warn(`Warning: <private> tags detected in memory title — tags do not redact in titles. Move sensitive content to body. (id=${id})`);
+      }
+      fields.push("title = ?");
+      values.push(cleanTitle);
+    }
+    if (patch.body !== undefined) {
+      const cleanBody = scrubSecrets(patch.body);
+      fields.push("body = ?");
+      values.push(cleanBody);
+    }
     if (patch.tags !== undefined) { fields.push("tags = ?"); values.push(JSON.stringify(patch.tags)); }
     if (patch.importance !== undefined) {
       fields.push("importance_score = ?");
@@ -239,10 +269,11 @@ export class MemoriesRepo {
     if (patch.pinned !== undefined) { fields.push("is_pinned = ?"); values.push(patch.pinned ? 1 : 0); }
 
     if (fields.length === 0) return false;
-    // Issue #4: update has_private when body changes.
+    // Issue #4: update has_private when body changes (use already-scrubbed value).
     if (patch.body !== undefined) {
       fields.push("has_private = ?");
-      values.push(hasPrivate(patch.body) ? 1 : 0);
+      // Re-use the scrubbed body already pushed into values above (idempotent if scrubbed again).
+      values.push(hasPrivate(scrubSecrets(patch.body)) ? 1 : 0);
     }
     fields.push("updated_at = ?");
     values.push(nowIso());

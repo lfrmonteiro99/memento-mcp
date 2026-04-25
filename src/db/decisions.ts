@@ -2,6 +2,10 @@ import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { nowIso } from "./database.js";
 import { hasPrivate } from "../engine/privacy.js";
+import { scrubSecrets } from "../engine/text-utils.js";
+import { createLogger, logLevelFromEnv } from "../lib/logger.js";
+
+const logger = createLogger(logLevelFromEnv());
 
 function buildFtsQuery(query: string): string {
   const tokens = query.split(/\s+/).filter(t => t.length > 0);
@@ -27,12 +31,21 @@ export class DecisionsRepo {
     if (supersedesId) {
       this.db.prepare("UPDATE decisions SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL").run(now, supersedesId);
     }
+    // Issue #12: scrub secrets from title and body at write time.
+    const cleanTitle = scrubSecrets(title);
+    const cleanBody = scrubSecrets(body);
+    if (cleanTitle !== title) {
+      logger.warn(`Secret pattern detected and scrubbed in decision title (id=${id})`);
+    }
+    if (hasPrivate(title)) {
+      logger.warn(`Warning: <private> tags detected in decision title — tags do not redact in titles. Move sensitive content to body. (id=${id})`);
+    }
     // Issue #4: set has_private flag on store.
-    const hasPrivateFlag = hasPrivate(body) ? 1 : 0;
+    const hasPrivateFlag = hasPrivate(cleanBody) ? 1 : 0;
     this.db.prepare(`
       INSERT INTO decisions (id, project_id, title, body, category, importance_score, supersedes_id, has_private, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, projectId, title, body, category, importance, supersedesId ?? null, hasPrivateFlag, now);
+    `).run(id, projectId, cleanTitle, cleanBody, category, importance, supersedesId ?? null, hasPrivateFlag, now);
     return id;
   }
 

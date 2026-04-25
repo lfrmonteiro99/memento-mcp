@@ -825,10 +825,23 @@ Always skipped:
 - body that matches a recent memory at Jaccard similarity ≥ `dedup_similarity_threshold` (project-scoped)
 - sessions that already hit `max_per_session`
 
-**Secret scrubbing** — before classification, the raw text is passed through `scrubSecrets`. Redacted patterns:
-- `api_key` / `password` / `secret` / `token` assignments (any casing)
-- Common provider env assignments: `AWS_*=`, `GITHUB_*=`, `OPENAI_*=`, etc.
-- PEM private-key blocks (`-----BEGIN ... PRIVATE KEY-----`)
+**Secret scrubbing** — `scrubSecrets` is applied at **write time** in every repo (`MemoriesRepo.store/update`, `DecisionsRepo.store`, `PitfallsRepo.store`) so the database never holds unscrubbed values. The classifier also scrubs synthesized titles and bodies before handing them to the store path. The integration test `tests/integration/secret-scrub-coverage.test.ts` is the source of truth for what is caught — any new write path must be added there.
+
+Redacted patterns:
+
+1. `api_key` / `password` / `secret` / `token` assignments (any casing)
+2. Common cloud/vendor env assignments: `AWS_*=`, `AZURE_*=`, `GCP_*=`, `GITHUB_*=`, `STRIPE_*=`, `OPENAI_*=`, `ANTHROPIC_*=`
+3. PEM private-key blocks (`-----BEGIN ... PRIVATE KEY-----` through `-----END ... PRIVATE KEY-----`)
+4. Database / cache / mail env-var prefixes: `DB_*=`, `DATABASE_*=`, `POSTGRES_*=`, `MYSQL_*=`, `MONGO_*=`, `REDIS_*=`, `SMTP_*=`, `MAIL_*=`, `RABBITMQ_*=`, `KAFKA_*=`
+5. URL-valued env-vars: `*_URL=<scheme>://...` (e.g. `DATABASE_URL=`, `REDIS_URL=`)
+6. URLs with embedded credentials: `https://user:pass@host` → `https://[REDACTED]@host` (host stays visible)
+7. HTTP Authorization / Bearer tokens: `Authorization: Bearer <token>` and standalone `Bearer <token>` (16+ chars)
+8. GitHub PATs: `ghp_`, `gho_`, `ghs_`, `ghu_`, `ghr_` prefixed tokens (36+ alphanumeric chars after prefix)
+9. JWT-shaped strings: three base64url segments separated by `.` with `eyJ` prefix (10+ chars per segment)
+
+**Titles are also scrubbed** at write time — a memory titled `"DB_PASSWORD=hunter2"` will be stored as `"[REDACTED]"`. A `logger.warn` is emitted if a secret pattern is found in a title (titles should not normally contain secrets).
+
+Note: `scrubSecrets` is a defence-in-depth safety net. It does not replace the `<private>...</private>` tag mechanism — use `<private>` for intentional redaction of sensitive body content.
 
 ### Utility signals and adaptive ranking
 
