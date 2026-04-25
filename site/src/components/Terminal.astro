@@ -1,0 +1,52 @@
+---
+const copyText = `npm install -g @lfrmonteiro99/memento-memory-mcp
+memento-mcp install
+memento-mcp import claude-md
+memento-mcp ui`;
+---
+
+<div class="terminal mx-auto mt-11 max-w-[720px] text-left" data-anim="terminal">
+  <div class="terminal-bar">
+    <span class="t-dot"></span>
+    <span class="t-dot"></span>
+    <span class="t-dot"></span>
+    <span class="t-title">~ — bash</span>
+    <button class="t-copy" type="button" data-copy={copyText} aria-label="Copy install commands">
+      <span class="t-copy-label">copy</span>
+    </button>
+  </div>
+  <pre class="terminal-body"><code><span class="prompt">$</span> <span class="cmd">npm install -g</span> <span class="arg">@lfrmonteiro99/memento-memory-mcp</span>
+<span class="prompt">$</span> <span class="cmd">memento-mcp</span> install
+<span class="prompt">$</span> <span class="cmd">memento-mcp</span> import claude-md
+<span class="prompt">$</span> <span class="cmd">memento-mcp</span> ui  <span class="comment"># open the local inspector</span>
+<span class="cursor"></span></code></pre>
+</div>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const text = btn.getAttribute('data-copy') || '';
+      const label = btn.querySelector<HTMLElement>('.t-copy-label');
+      const original = label?.textContent ?? null;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'absolute';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch {}
+        document.body.removeChild(ta);
+      }
+      btn.classList.add('copied');
+      if (label) label.textContent = 'copied';
+      setTimeout(() => {
+        btn.classList.remove('copied');
+        if (label && original) label.textContent = original;
+      }, 1400);
+    });
+  });
+</script>

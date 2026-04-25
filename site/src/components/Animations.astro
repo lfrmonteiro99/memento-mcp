@@ -1,0 +1,99 @@
+---
+---
+
+<script>
+  import { animate, inView, stagger } from 'motion';
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // hero-level entrance
+  const heroItems = document.querySelectorAll<HTMLElement>('[data-anim="fade-up"]');
+  if (!reduced && heroItems.length) {
+    heroItems.forEach((el) => el.classList.add('will-reveal'));
+
+    // Hero items: animate immediately on load with their per-element delay.
+    const isHero = (el: HTMLElement) => !!el.closest('section.container-x.text-center');
+    const heroSet: HTMLElement[] = [];
+    heroItems.forEach((el) => { if (isHero(el)) heroSet.push(el); });
+
+    heroSet.forEach((el) => {
+      const delay = Number(el.getAttribute('data-anim-delay') || 0) / 1000;
+      animate(
+        el,
+        { opacity: [0, 1], transform: ['translateY(14px)', 'translateY(0px)'] },
+        { duration: 0.65, delay, easing: [0.2, 0.7, 0.2, 1] }
+      );
+    });
+
+    // Non-hero: animate when entering viewport.
+    const offscreen: HTMLElement[] = [];
+    heroItems.forEach((el) => { if (!isHero(el)) offscreen.push(el); });
+
+    offscreen.forEach((el) => {
+      inView(
+        el,
+        () => {
+          animate(
+            el,
+            { opacity: [0, 1], transform: ['translateY(14px)', 'translateY(0px)'] },
+            { duration: 0.55, easing: [0.2, 0.7, 0.2, 1] }
+          );
+          return () => {};
+        },
+        { amount: 0.15 }
+      );
+    });
+  } else if (reduced) {
+    heroItems.forEach((el) => {
+      el.style.opacity = '1';
+      el.style.transform = 'none';
+    });
+  }
+
+  // terminal entrance with subtle scale
+  const term = document.querySelector<HTMLElement>('[data-anim="terminal"]');
+  if (term && !reduced) {
+    term.classList.add('will-reveal');
+    animate(
+      term,
+      { opacity: [0, 1], transform: ['translateY(20px) scale(0.985)', 'translateY(0) scale(1)'] },
+      { duration: 0.85, delay: 0.25, easing: [0.2, 0.7, 0.2, 1] }
+    );
+  }
+
+  // type-pill stagger when section enters viewport
+  const pills = document.querySelectorAll<HTMLElement>('.type-pill');
+  if (pills.length && !reduced) {
+    pills.forEach((p) => { p.style.opacity = '0'; p.style.transform = 'translateY(8px)'; });
+    const firstPill = pills[0];
+    if (firstPill) {
+      inView(
+        firstPill,
+        () => {
+          animate(
+            pills,
+            { opacity: [0, 1], transform: ['translateY(8px)', 'translateY(0px)'] },
+            { duration: 0.45, delay: stagger(0.06), easing: [0.2, 0.7, 0.2, 1] }
+          );
+          return () => {};
+        },
+        { amount: 0.4 }
+      );
+    }
+  }
+
+  // parallax-ish glow on scroll
+  const glow = document.querySelector<HTMLElement>('.bg-glow');
+  if (glow && !reduced) {
+    let ticking = false;
+    window.addEventListener('scroll', () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        const y = window.scrollY * 0.04;
+        glow.style.transform = `translateY(${y}px)`;
+        ticking = false;
+      });
+    }, { passive: true });
+  }
+</script>

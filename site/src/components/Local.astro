@@ -1,0 +1,25 @@
+---
+const checks = [
+  'Local SQLite. No required cloud.',
+  'FTS5 search out of the box.',
+  'Optional embeddings — opt-in, your key.',
+  'Team sync via git, not a SaaS.',
+  'Private regions excluded from sync, search and LLM calls.',
+  'Secret scrubbing at write time.',
+];
+---
+
+<section class="container-x py-[clamp(64px,10vw,120px)] divider-dashed">
+  <div class="section-tag">// local-first</div>
+  <h2 class="text-[clamp(26px,4vw,42px)] font-bold leading-[1.12] max-w-[22ch] mb-[14px]" style="letter-spacing: -.02em;">
+    Your memory. Your machine. <span class="grad-text">Your repo</span>.
+  </h2>
+  <ul class="mt-8 grid max-w-[820px] grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+    {checks.map((c) => (
+      <li class="flex items-center gap-3 text-[15px]" style="color: var(--color-fg-soft);" data-anim="fade-up">
+        <span class="chk"></span>
+        {c}
+      </li>
+    ))}
+  </ul>
+</section>

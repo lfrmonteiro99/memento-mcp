@@ -1,0 +1,45 @@
+---
+import ThemeToggle from './ThemeToggle.astro';
+---
+
+<header class="nav-shell sticky top-0 z-50 py-[22px]" id="nav">
+  <div class="container-x flex items-center gap-6">
+    <a href="#top" class="inline-flex items-center gap-[10px] font-bold tracking-tight" aria-label="memento-mcp home">
+      <span class="inline-flex h-[30px] w-[30px] items-center justify-center rounded-lg border" style="border-color: var(--color-border); background: var(--color-surface);">
+        <svg viewBox="0 0 32 32" width="22" height="22">
+          <defs>
+            <linearGradient id="navg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="var(--color-accent)" />
+              <stop offset="100%" stop-color="var(--color-accent-2)" />
+            </linearGradient>
+          </defs>
+          <path d="M16 2 L29 9 L29 23 L16 30 L3 23 L3 9 Z" fill="none" stroke="url(#navg)" stroke-width="1.6" stroke-linejoin="round" />
+          <circle cx="16" cy="16" r="3" fill="url(#navg)" />
+          <path d="M16 13 L16 6 M16 19 L16 26 M19 16 L26 16 M13 16 L6 16" stroke="url(#navg)" stroke-width="1.2" stroke-linecap="round" opacity=".7" />
+        </svg>
+      </span>
+      <span class="text-[15px]">memento<span class="font-medium" style="color: var(--color-fg-mute);">-mcp</span></span>
+    </a>
+
+    <nav class="ml-auto flex items-center gap-1" aria-label="Primary">
+      <a class="hidden sm:inline-flex rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[var(--color-surface)]" style="color: var(--color-fg-soft);" href="#features">Features</a>
+      <a class="hidden sm:inline-flex rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[var(--color-surface)]" style="color: var(--color-fg-soft);" href="#how">How it works</a>
+      <a class="hidden sm:inline-flex rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[var(--color-surface)]" style="color: var(--color-fg-soft);" href="#install">Install</a>
+      <a class="inline-flex rounded-lg px-3 py-2 text-sm transition-colors hover:bg-[var(--color-surface)]" style="color: var(--color-fg-soft);" href="https://github.com/lfrmonteiro99/memento-mcp" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+
+    <ThemeToggle />
+  </div>
+</header>
+
+<script>
+  const nav = document.getElementById('nav');
+  if (nav) {
+    const onScroll = () => {
+      if (window.scrollY > 8) nav.classList.add('scrolled');
+      else nav.classList.remove('scrolled');
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+  }
+</script>
