@@ -1,32 +1,78 @@
+<div align="center">
+
+<img src="docs/assets/hero-overview.png" alt="Memento Memory MCP" width="100%" />
+
+<br />
+
 # memento-mcp
 
-**Persistent memory for AI coding agents.**
+### Persistent memory for AI coding agents.
 
-A local-first MCP server that gives Claude Code, Codex, Cursor, and any stdio-MCP client durable project memory: facts, decisions, patterns, architecture notes, pitfalls, session summaries, and team-shared knowledge.
+A local-first MCP server that gives **Claude Code**, **Codex**, **Cursor**, and any stdio-MCP client durable project memory: facts, decisions, patterns, architecture notes, pitfalls, session summaries, and team-shared knowledge.
 
-![Memento Memory MCP overview](docs/assets/hero-overview.png)
+<br />
 
-AI coding agents are powerful, but they forget. They forget why a decision was made, which migration broke production, which convention your project follows, and which workaround saved you three hours last week.
+[![npm version](https://img.shields.io/npm/v/@luispmonteiro/memento-memory-mcp.svg?style=flat-square&color=cb3837&logo=npm&logoColor=white&label=npm)](https://www.npmjs.com/package/@luispmonteiro/memento-memory-mcp)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-compatible-7c3aed?style=flat-square)](https://modelcontextprotocol.io)
+[![Local-first](https://img.shields.io/badge/local--first-SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white)](#stay-local-by-default)
 
-`memento-mcp` fixes that.
+</div>
+
+---
+
+> [!NOTE]
+> AI coding agents are powerful, but they forget. They forget why a decision was made, which migration broke production, which convention your project follows, and which workaround saved you three hours last week.
+>
+> **`memento-mcp` fixes that.**
 
 It stores structured memories locally in SQLite, retrieves the right context when your agent needs it, and can sync selected team memories through git. No hosted vector database. No mandatory cloud account. No mystery SaaS quietly eating your project history.
 
-Install from npm:
+<br />
 
-    npm install -g @lfrmonteiro99/memento-memory-mcp
-    memento-mcp install
-    memento-mcp import claude-md
-    memento-mcp ui
+## Quick start
+
+```bash
+npm install -g @lfrmonteiro99/memento-memory-mcp
+memento-mcp install
+memento-mcp import claude-md
+memento-mcp ui
+```
+
+---
+
+## Table of contents
+
+- [Documentation](#documentation)
+- [Requirements](#requirements)
+- [Package](#package)
+- [What it does](#what-it-does)
+- [Why use it](#why-use-it)
+- [Installation](#installation)
+- [60-second tour](#60-second-tour)
+- [Core features](#core-features)
+- [Knowledge model](#knowledge-model)
+- [Example use cases](#example-use-cases)
+- [License](#license)
+
+---
 
 ## Documentation
 
-### Getting started
+<table>
+<tr>
+<td valign="top" width="33%">
+
+**Getting started**
 
 - [Installation & client setup](docs/install.md)
 - [Importing CLAUDE.md](docs/import.md)
 
-### Features
+</td>
+<td valign="top" width="33%">
+
+**Features**
 
 - [Team-scoped memories with git sync](docs/team-sync.md)
 - [Per-project policy](docs/policy.md)
@@ -38,34 +84,54 @@ Install from npm:
 - [Vault integration](docs/vault.md)
 - [Web inspector](docs/web-inspector.md)
 
-### Reference
+</td>
+<td valign="top" width="33%">
+
+**Reference**
 
 - [Configuration](docs/configuration.md)
 - [MCP tools reference](docs/mcp-tools.md)
 - [Development & troubleshooting](docs/development.md)
 
+</td>
+</tr>
+</table>
+
+---
+
 ## Requirements
 
-- Node.js 18 or newer
-- npm
-- An MCP-compatible client, such as Claude Code, Codex, Cursor, or another stdio-MCP client
+- **Node.js 18** or newer
+- **npm**
+- An **MCP-compatible client**, such as Claude Code, Codex, Cursor, or another stdio-MCP client
 
-Optional:
+<details>
+<summary><b>Optional dependencies</b></summary>
 
 - Obsidian vault for curated Markdown knowledge
 - OpenAI key for semantic embeddings
 - Anthropic or OpenAI key for LLM-assisted session summaries
 - git repo for team memory sync
 
+</details>
+
+---
+
 ## Package
 
 Published on npm as:
 
-    @luispmonteiro/memento-memory-mcp
+```text
+@luispmonteiro/memento-memory-mcp
+```
 
 Install globally:
 
-    npm install -g @luispmonteiro/memento-memory-mcp
+```bash
+npm install -g @luispmonteiro/memento-memory-mcp
+```
+
+---
 
 ## What it does
 
@@ -73,17 +139,17 @@ Install globally:
 
 It can remember:
 
-- architectural decisions
-- project conventions
-- known pitfalls
-- implementation patterns
-- debugging notes
-- user/team preferences
-- session summaries
-- reusable context from `CLAUDE.md`
-- curated notes from an Obsidian vault
+| | |
+| :--- | :--- |
+| Architectural decisions | Project conventions |
+| Known pitfalls | Implementation patterns |
+| Debugging notes | User/team preferences |
+| Session summaries | Reusable context from `CLAUDE.md` |
+| Curated notes from an Obsidian vault | |
 
 Then it injects the relevant context back into your agent at the right time, without forcing you to paste the same project explanation into every new chat like a medieval scribe with npm installed.
+
+---
 
 ## Why use it
 
@@ -91,7 +157,9 @@ Then it injects the relevant context back into your agent at the right time, wit
 
 Import your existing `CLAUDE.md`, store typed memories, and let your MCP client retrieve the useful bits automatically.
 
-    memento-mcp import claude-md
+```bash
+memento-mcp import claude-md
+```
 
 ### Keep decisions close to the code
 
@@ -101,12 +169,16 @@ Log decisions, pitfalls, patterns, and architecture notes as structured memories
 
 Team-scoped memories are serialized into your repo under:
 
-    .memento/memories/
+```text
+.memento/memories/
+```
 
 Commit them, push them, and teammates can pull the same operational knowledge.
 
-    memento-mcp sync init
-    memento-mcp sync pull
+```bash
+memento-mcp sync init
+memento-mcp sync pull
+```
 
 ### Stay local by default
 
@@ -119,7 +191,8 @@ The default setup uses:
 - no required cloud account
 - no hosted database
 
-Optional embeddings are available, but they are opt-in.
+> [!TIP]
+> Optional embeddings are available, but they are **opt-in**.
 
 ### Keep private text private
 
@@ -129,53 +202,66 @@ Optional embeddings are available, but they are opt-in.
 
 Run the local inspector:
 
-    memento-mcp ui
+```bash
+memento-mcp ui
+```
 
 Browse memories, sessions, projects, sync state, analytics, and drift without opening yet another SaaS dashboard pretending to be “simple”.
 
+---
+
 ## Installation
 
-Install from npm:
+**1.** Install from npm:
 
-    npm install -g @lfrmonteiro99/memento-memory-mcp
+```bash
+npm install -g @lfrmonteiro99/memento-memory-mcp
+```
 
-Then wire it into your MCP client:
+**2.** Wire it into your MCP client:
 
-    memento-mcp install
+```bash
+memento-mcp install
+```
 
 This configures supported local clients such as Claude Code, Codex, Cursor, or other stdio-MCP clients.
 
-Verify the install:
+**3.** Verify the install:
 
-    memento-mcp --help
+```bash
+memento-mcp --help
+```
 
-Open the local web UI:
+**4.** Open the local web UI:
 
-    memento-mcp ui
+```bash
+memento-mcp ui
+```
+
+---
 
 ## 60-second tour
 
-1. Install from npm:
+```bash
+# 1. Install from npm
+npm install -g @lfrmonteiro99/memento-memory-mcp
 
-       npm install -g @lfrmonteiro99/memento-memory-mcp
+# 2. Wire your MCP client
+memento-mcp install
 
-2. Wire your MCP client:
+# 3. Import existing project memory
+memento-mcp import claude-md --dry-run
+memento-mcp import claude-md --no-confirm
 
-       memento-mcp install
+# 4. Open the local inspector
+memento-mcp ui
 
-3. Import existing project memory:
+# 5. Share team memory through git
+memento-mcp sync init
+memento-mcp sync pull
+```
 
-       memento-mcp import claude-md --dry-run
-       memento-mcp import claude-md --no-confirm
-
-4. Open the local inspector:
-
-       memento-mcp ui
-
-5. Share team memory through git:
-
-       memento-mcp sync init
-       memento-mcp sync pull
+---
 
 ## Core features
 
@@ -183,26 +269,23 @@ Open the local web UI:
 
 Store different kinds of project knowledge with different ranking weights and retrieval behavior:
 
-- `fact`
-- `decision`
-- `preference`
-- `pattern`
-- `architecture`
-- `pitfall`
+`fact` &nbsp;·&nbsp; `decision` &nbsp;·&nbsp; `preference` &nbsp;·&nbsp; `pattern` &nbsp;·&nbsp; `architecture` &nbsp;·&nbsp; `pitfall`
 
 Dedicated tools such as `decisions_log` and `pitfalls_log` make high-signal memory capture easier.
 
-Read more: [MCP tools reference](docs/mcp-tools.md)
+> Read more: [MCP tools reference](docs/mcp-tools.md)
 
 ### Team memory via git
 
 Team-scoped memories are written as JSON files under:
 
-    .memento/memories/<id>.json
+```text
+.memento/memories/<id>.json
+```
 
 That means your team can review, commit, diff, and sync shared agent memory like normal project files.
 
-Read more: [Team-scoped memories with git sync](docs/team-sync.md)
+> Read more: [Team-scoped memories with git sync](docs/team-sync.md)
 
 ### Per-project policy
 
@@ -216,7 +299,7 @@ Use `.memento/policy.toml` to control project-specific behavior:
 
 The policy lives in the repo, not hidden somewhere on one developer’s machine, because apparently “works on my machine” needed a memory layer too.
 
-Read more: [Per-project policy](docs/policy.md)
+> Read more: [Per-project policy](docs/policy.md)
 
 ### Local-first search
 
@@ -230,7 +313,7 @@ By default, `memento-mcp` uses:
 
 No vector database is required.
 
-Read more: [Token-aware search](docs/search.md)
+> Read more: [Token-aware search](docs/search.md)
 
 ### Optional semantic search
 
@@ -238,13 +321,13 @@ If you want semantic retrieval, enable embeddings. FTS5 and vector results are m
 
 Embeddings are opt-in and use your own provider key.
 
-Read more: [Optional embeddings](docs/embeddings.md)
+> Read more: [Optional embeddings](docs/embeddings.md)
 
 ### Smart write-time deduplication
 
 When embeddings are enabled, near-duplicate memories can be detected at write time, before your memory store becomes a landfill of almost-identical “important notes”.
 
-Read more: [Smart write-time dedup](docs/embeddings.md#smart-write-time-dedup)
+> Read more: [Smart write-time dedup](docs/embeddings.md#smart-write-time-dedup)
 
 ### Session summaries
 
@@ -255,22 +338,17 @@ Supported modes:
 - deterministic summaries by default
 - optional LLM-assisted summaries using Anthropic or OpenAI
 
-Read more: [End-of-session summaries](docs/session-summaries.md)
+> Read more: [End-of-session summaries](docs/session-summaries.md)
 
 ### Obsidian vault integration
 
 Index a curated Obsidian vault and route context through:
 
-- `me.md`
-- `vault.md`
-- maps
-- skills
-- playbooks
-- long-form project notes
+`me.md` &nbsp;·&nbsp; `vault.md` &nbsp;·&nbsp; maps &nbsp;·&nbsp; skills &nbsp;·&nbsp; playbooks &nbsp;·&nbsp; long-form project notes
 
 The vault layer is indexed and searched, but not auto-written by the agent unless explicitly promoted.
 
-Read more: [Vault integration](docs/vault.md)
+> Read more: [Vault integration](docs/vault.md)
 
 ### Privacy controls
 
@@ -283,7 +361,7 @@ Privacy features include:
 - secret scrubbing at write time
 - title and body sanitization
 
-Read more: [Privacy](docs/privacy.md)
+> Read more: [Privacy](docs/privacy.md)
 
 ### Mode profiles
 
@@ -295,48 +373,60 @@ Switch stop-words and trivial-prompt classifiers by profile:
 
 Use config or environment variables:
 
-    MEMENTO_PROFILE=portuguese
+```bash
+MEMENTO_PROFILE=portuguese
+```
 
-Read more: [Mode profiles](docs/mode-profiles.md)
+> Read more: [Mode profiles](docs/mode-profiles.md)
 
 ### Automatic context injection and capture
 
 Memory tools (`memory_store`, `memory_search`, `decisions_log`, …) work in any stdio-MCP client. Automatic injection and capture use whatever extension mechanism the client provides — most major clients now expose lifecycle hooks.
 
+<details open>
+<summary><b>Client compatibility</b></summary>
+
+<br />
+
 | Client | MCP tools | Hooks | Hooks since |
-| --- | :---: | :---: | :---: |
-| Claude Code | yes | yes (native) | shipped with Claude Code |
-| Cursor | yes | yes (native) | 1.7 (Oct 2025) |
-| Codex | yes | yes (native, opt-in flag) | 0.114.0 (Mar 2026) |
-| Gemini CLI | yes | yes (native) | 0.26.0 (Jan 2026) |
-| Cline | yes | yes (native) | 3.36.0 (late 2025) |
-| Aider | yes | no — rule-file fallback only | — |
+| :--- | :---: | :---: | :--- |
+| **Claude Code** | yes | yes (native) | shipped with Claude Code |
+| **Cursor** | yes | yes (native) | 1.7 (Oct 2025) |
+| **Codex** | yes | yes (native, opt-in flag) | 0.114.0 (Mar 2026) |
+| **Gemini CLI** | yes | yes (native) | 0.26.0 (Jan 2026) |
+| **Cline** | yes | yes (native) | 3.36.0 (late 2025) |
+| **Aider** | yes | no — rule-file fallback only | — |
 | Other stdio-MCP | yes | depends on client | — |
+
+</details>
 
 Each client's hook event names and config format differ (e.g. Claude Code uses `UserPromptSubmit`, Cursor uses `beforeSubmitPrompt`, Cline filenames the events). The four `memento-hook-*` binaries were built for Claude Code's stdin payload shape; they work directly on Codex (very similar payload), and may need a light adapter on Cursor, Gemini CLI, and Cline. For clients without hooks, fall back to a rule file (`AGENTS.md`, `.cursor/rules/*.mdc`, system prompt) telling the agent to call the memory tools itself.
 
-Read more: [Installation & client setup](docs/install.md)
+> Read more: [Installation & client setup](docs/install.md)
 
 ### Web inspector
 
 Launch a local browser UI:
 
-    memento-mcp ui
+```bash
+memento-mcp ui
+```
 
 Inspect:
 
-- memories
-- sessions
-- projects
-- sync drift
-- analytics
-- memory health
+`memories` &nbsp;·&nbsp; `sessions` &nbsp;·&nbsp; `projects` &nbsp;·&nbsp; `sync drift` &nbsp;·&nbsp; `analytics` &nbsp;·&nbsp; `memory health`
 
-Read more: [Web inspector](docs/web-inspector.md)
+> Read more: [Web inspector](docs/web-inspector.md)
+
+---
 
 ## Knowledge model
 
 `memento-mcp` separates fast operational memory from curated long-form knowledge.
+
+<table>
+<tr>
+<td valign="top" width="50%">
 
 ### SQLite memory layer
 
@@ -352,6 +442,9 @@ Use it for:
 - preferences
 - session-derived notes
 
+</td>
+<td valign="top" width="50%">
+
 ### Vault knowledge layer
 
 Curated Markdown knowledge from an Obsidian vault.
@@ -364,42 +457,56 @@ Use it for:
 - technical notes
 - stable reference material
 
+</td>
+</tr>
+</table>
+
 Search and hooks can combine both layers.
 
-![What is Memento Memory MCP](docs/assets/what-is-memento-memory-mcp.png)
+<div align="center">
 
-![Why use Memento Memory MCP](docs/assets/why-use-memento-memory-mcp.png)
+<img src="docs/assets/what-is-memento-memory-mcp.png" alt="What is Memento Memory MCP" width="80%" />
+
+<br /><br />
+
+<img src="docs/assets/why-use-memento-memory-mcp.png" alt="Why use Memento Memory MCP" width="80%" />
+
+</div>
+
+---
 
 ## Example use cases
 
 ### Remember project decisions
 
-Decision: We use repository classes for complex SQL access instead of putting queries in controllers.
-
-Reason: Keeps business logic separate from persistence and makes performance tuning easier.
-
-Scope: project
-
-Tags: architecture, backend
+> **Decision:** We use repository classes for complex SQL access instead of putting queries in controllers.
+>
+> **Reason:** Keeps business logic separate from persistence and makes performance tuning easier.
+>
+> **Scope:** project &nbsp;·&nbsp; **Tags:** `architecture`, `backend`
 
 ### Remember pitfalls
 
-Pitfall: The quality scheduling query becomes expensive when paginating after loading all rows.
-
-Fix: Use database-level pagination and a separate count query.
-
-Scope: project
-
-Tags: performance, sql
+> **Pitfall:** The quality scheduling query becomes expensive when paginating after loading all rows.
+>
+> **Fix:** Use database-level pagination and a separate count query.
+>
+> **Scope:** project &nbsp;·&nbsp; **Tags:** `performance`, `sql`
 
 ### Remember team conventions
 
-Preference: In this project, bug fixes and improvements are tracked separately in release notes.
+> **Preference:** In this project, bug fixes and improvements are tracked separately in release notes.
+>
+> **Scope:** team &nbsp;·&nbsp; **Tags:** `process`, `release-notes`
 
-Scope: team
-
-Tags: process, release-notes
+---
 
 ## License
 
-MIT
+[MIT](LICENSE)
+
+<div align="center">
+
+<sub>Built with care for AI coding agents that deserve to remember.</sub>
+
+</div>
