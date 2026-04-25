@@ -63,6 +63,11 @@ export interface Config {
       similarityThreshold: number;
       batchSize: number;
       requestTimeoutMs: number;
+      dedup: boolean;
+      dedupThreshold: number;
+      dedupDefaultMode: "strict" | "warn" | "off";
+      dedupCheckOnUpdate: boolean;
+      dedupMaxScan: number;
     };
   };
   hooks: {
@@ -172,6 +177,11 @@ export const DEFAULT_CONFIG: Config = {
       similarityThreshold: 0.5,
       batchSize: 32,
       requestTimeoutMs: 10000,
+      dedup: false,
+      dedupThreshold: 0.92,
+      dedupDefaultMode: "warn" as "strict" | "warn" | "off",
+      dedupCheckOnUpdate: true,
+      dedupMaxScan: 2000,
     },
   },
   hooks: {
@@ -301,6 +311,11 @@ export function loadConfig(configPath: string): Config {
       if (emb.similarity_threshold != null) config.search.embeddings.similarityThreshold = Number(emb.similarity_threshold);
       if (emb.batch_size != null) config.search.embeddings.batchSize = Number(emb.batch_size);
       if (emb.request_timeout_ms != null) config.search.embeddings.requestTimeoutMs = Number(emb.request_timeout_ms);
+      if (emb.dedup != null) config.search.embeddings.dedup = Boolean(emb.dedup);
+      if (emb.dedup_threshold != null) config.search.embeddings.dedupThreshold = Number(emb.dedup_threshold);
+      if (emb.dedup_default_mode) config.search.embeddings.dedupDefaultMode = String(emb.dedup_default_mode) as "strict" | "warn" | "off";
+      if (emb.dedup_check_on_update != null) config.search.embeddings.dedupCheckOnUpdate = Boolean(emb.dedup_check_on_update);
+      if (emb.dedup_max_scan != null) config.search.embeddings.dedupMaxScan = Number(emb.dedup_max_scan);
     }
   }
   if (toml.hooks) {

@@ -29,6 +29,7 @@ import { toCompressionConfig } from "./lib/compression-config.js";
 import { configureFileMemoryCache } from "./lib/file-memory.js";
 import { promoteImportanceFromUtility } from "./engine/importance-promoter.js";
 import { collectPoliciesPerProject } from "./lib/policy.js";
+import { logDedupOnFirstUse } from "./engine/embeddings/dedup.js";
 
 const log = createLogger(logLevelFromEnv());
 const config = loadConfig(getDefaultConfigPath());
@@ -43,6 +44,9 @@ const disposeFlush = installFlushOnExit(analyticsTracker);
 
 // File-memory cache TTL from config (0 disables caching).
 configureFileMemoryCache(config.fileMemory.enabled ? config.fileMemory.cacheTtlSeconds : 0);
+
+// Issue #8: one-time startup log when both embeddings.enabled and dedup are true.
+logDedupOnFirstUse(config.search.embeddings);
 
 const MIN_VACUUM_INTERVAL_MS = 24 * 60 * 60 * 1000;
 let lastVacuumAt = 0;
@@ -176,6 +180,7 @@ server.tool(
     vault_kind: z.string().default(""),
     vault_folder: z.string().default(""),
     vault_note_title: z.string().default(""),
+    dedup: z.enum(["strict", "warn", "off"]).optional(),
   },
   async (params) => ({
     content: [{ type: "text" as const, text: await handleMemoryStore(memRepo, params, db, config, embRepo) }],
@@ -327,6 +332,7 @@ server.tool(
     importance: z.number().optional(),
     memory_type: z.string().optional(),
     pinned: z.boolean().optional(),
+    dedup: z.enum(["strict", "warn", "off"]).optional(),
   },
   async (params) => ({
     content: [{ type: "text" as const, text: await handleMemoryUpdate(memRepo, params, config, embRepo) }],

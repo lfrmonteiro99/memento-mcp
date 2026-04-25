@@ -71,6 +71,12 @@ export interface SyncStats {
   conflicts: number;
 }
 
+export interface DedupStats {
+  blocked: number;
+  warned: number;
+  passed: number;
+}
+
 export interface AnalyticsReport {
   period: string;
   session_count: number;
@@ -99,6 +105,7 @@ export interface AnalyticsReport {
   };
   session_summary_stats?: SessionSummaryStats;
   sync_stats?: SyncStats;
+  dedup_stats?: DedupStats;
 }
 
 export function periodToSqlClause(period: string): string {
@@ -253,6 +260,26 @@ export function generateReport(db: Database.Database, projectId: string | null, 
   const totalSyncPulls = syncPullRows.cnt;
   const totalSyncConflicts = syncConflictRows.total ?? 0;
 
+  // Dedup stats (last 7d window; last period applies)
+  const dedupRows = db.prepare(`
+    SELECT
+      json_extract(event_data, '$.action') as action,
+      COUNT(*) as cnt
+    FROM analytics_events
+    WHERE ${projSql} AND event_type = 'dedup_decision' ${clause}
+    GROUP BY json_extract(event_data, '$.action')
+  `).all(...projBind) as Array<{ action: string | null; cnt: number }>;
+
+  let dedupBlocked = 0;
+  let dedupWarned = 0;
+  let dedupPassed = 0;
+  for (const r of dedupRows) {
+    if (r.action === "blocked") dedupBlocked += r.cnt;
+    else if (r.action === "warned") dedupWarned += r.cnt;
+    else if (r.action === "passed") dedupPassed += r.cnt;
+  }
+  const totalDedupEvents = dedupBlocked + dedupWarned + dedupPassed;
+
   return {
     period,
     session_count: sessionStats.session_count,
@@ -289,6 +316,11 @@ export function generateReport(db: Database.Database, projectId: string | null, 
       pushes: totalSyncPushes,
       pulls: totalSyncPulls,
       conflicts: totalSyncConflicts,
+    } : undefined,
+    dedup_stats: totalDedupEvents > 0 ? {
+      blocked: dedupBlocked,
+      warned: dedupWarned,
+      passed: dedupPassed,
     } : undefined,
   };
 }

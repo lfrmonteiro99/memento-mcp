@@ -234,4 +234,44 @@ describe("embeddings config", () => {
     expect(config.search.maxResults).toBe(10); // default
     expect(config.search.ftsPrefixMatching).toBe(true); // default
   });
+
+  it("DEFAULT_CONFIG has dedup=false by default (issue #8)", () => {
+    expect(DEFAULT_CONFIG.search.embeddings.dedup).toBe(false);
+    expect(DEFAULT_CONFIG.search.embeddings.dedupThreshold).toBe(0.92);
+    expect(DEFAULT_CONFIG.search.embeddings.dedupDefaultMode).toBe("warn");
+    expect(DEFAULT_CONFIG.search.embeddings.dedupCheckOnUpdate).toBe(true);
+    expect(DEFAULT_CONFIG.search.embeddings.dedupMaxScan).toBe(2000);
+  });
+
+  it("TOML round-trip: dedup, dedup_threshold, dedup_default_mode, dedup_check_on_update, dedup_max_scan", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    const cfgPath = join(tmpDir, "config.toml");
+    writeFileSync(
+      cfgPath,
+      [
+        "[search.embeddings]",
+        "enabled = true",
+        "dedup = true",
+        "dedup_threshold = 0.85",
+        'dedup_default_mode = "strict"',
+        "dedup_check_on_update = false",
+        "dedup_max_scan = 500",
+      ].join("\n"),
+    );
+    const config = loadConfig(cfgPath);
+    expect(config.search.embeddings.dedup).toBe(true);
+    expect(config.search.embeddings.dedupThreshold).toBe(0.85);
+    expect(config.search.embeddings.dedupDefaultMode).toBe("strict");
+    expect(config.search.embeddings.dedupCheckOnUpdate).toBe(false);
+    expect(config.search.embeddings.dedupMaxScan).toBe(500);
+  });
+
+  it("embeddings.enabled=true alone does NOT enable dedup (must be explicit)", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    const cfgPath = join(tmpDir, "config.toml");
+    writeFileSync(cfgPath, "[search.embeddings]\nenabled = true\n");
+    const config = loadConfig(cfgPath);
+    expect(config.search.embeddings.enabled).toBe(true);
+    expect(config.search.embeddings.dedup).toBe(false); // separate opt-in
+  });
 });

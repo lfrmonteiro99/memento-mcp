@@ -6,6 +6,7 @@ import type { Config } from "../lib/config.js";
 import { rebuildVaultIndex } from "../engine/vault-index.js";
 import { persistMemoryToVault } from "../engine/vault-writer.js";
 import { createProvider } from "../engine/embeddings/provider.js";
+import { findDuplicate } from "../engine/embeddings/dedup.js";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
 import { validateTags } from "../engine/privacy.js";
 import { loadProjectPolicy } from "../lib/policy.js";
@@ -19,6 +20,7 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
   supersedes_id?: string; pin?: boolean;
   persist_to_vault?: boolean; vault_mode?: "create" | "create_or_update";
   vault_kind?: string; vault_folder?: string; vault_note_title?: string;
+  dedup?: "strict" | "warn" | "off";
 }, db?: Database.Database, config?: Config, embRepo?: EmbeddingsRepo): Promise<string> {
   // Issue #4: validate balanced <private> tags before storing.
   const tagValidation = validateTags(params.content ?? "");
@@ -65,6 +67,48 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
     }
   }
 
+  // Issue #8: dedup check — runs AFTER policy (don't pay for embed when policy blocks),
+  // BEFORE store (so we can return early on strict mode).
+  let dedupWarnMessage: string | null = null;
+  if (config && embRepo && db) {
+    const cfg = config.search.embeddings;
+    if (cfg.enabled && cfg.dedup) {
+      const provider = createProvider(cfg);
+      if (provider) {
+        const mode = params.dedup ?? cfg.dedupDefaultMode;
+        if (mode !== "off") {
+          // Resolve project id for scoping
+          let projectId: string | null = null;
+          if (params.project_path) {
+            const row = db.prepare("SELECT id FROM projects WHERE root_path = ?").get(params.project_path) as
+              | { id: string } | undefined;
+            projectId = row?.id ?? null;
+          }
+
+          const text = `${params.title}\n\n${params.content}`;
+          const { duplicate, skipped } = await findDuplicate(
+            db,
+            embRepo,
+            provider,
+            text,
+            projectId,
+            cfg.dedupThreshold,
+            cfg.dedupMaxScan,
+          );
+
+          if (!skipped && duplicate) {
+            const sim = duplicate.similarity.toFixed(2);
+            if (mode === "strict") {
+              return `Memory not stored: near-duplicate of "${duplicate.title}" (sim ${sim}, id ${duplicate.memoryId}). Pass dedup="off" to override or call memory_update on the existing memory.`;
+            }
+            // mode === "warn" — store but surface info
+            dedupWarnMessage = `Near-duplicate of "${duplicate.title}" (sim ${sim}, id ${duplicate.memoryId}). Consider memory_update or memory_link.`;
+          }
+        }
+      }
+    }
+  }
+
   const memoryType = params.memory_type ?? "fact";
   const shouldPersistToVault =
     params.persist_to_vault === true ||
@@ -97,16 +141,20 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
     }
   }
 
+  // Build response, possibly including dedup warning.
+  const baseMsg = `Memory stored with ID: ${id}`;
+  const storeResult = dedupWarnMessage ? `${baseMsg}\n⚠ ${dedupWarnMessage}` : baseMsg;
+
   if (!shouldPersistToVault) {
-    return `Memory stored with ID: ${id}`;
+    return storeResult;
   }
 
   if (!db || !config) {
-    return `Memory stored with ID: ${id}\nVault persistence skipped: database/config not available.`;
+    return `${storeResult}\nVault persistence skipped: database/config not available.`;
   }
 
   if (!config.vault.enabled || !config.vault.path) {
-    return `Memory stored with ID: ${id}\nVault persistence skipped: vault support is not enabled.`;
+    return `${storeResult}\nVault persistence skipped: vault support is not enabled.`;
   }
 
   const note = persistMemoryToVault(config.vault, {
@@ -121,5 +169,5 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
   });
   rebuildVaultIndex(db, config.vault);
 
-  return `Memory stored with ID: ${id}\nVault note ${note.action}: ${note.relativePath}`;
+  return `${storeResult}\nVault note ${note.action}: ${note.relativePath}`;
 }

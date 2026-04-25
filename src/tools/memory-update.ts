@@ -4,12 +4,16 @@ import type { MemoriesRepo } from "../db/memories.js";
 import type { EmbeddingsRepo } from "../db/embeddings.js";
 import type { Config } from "../lib/config.js";
 import { createProvider } from "../engine/embeddings/provider.js";
+import { findDuplicate } from "../engine/embeddings/dedup.js";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
 import { validateTags } from "../engine/privacy.js";
 import { loadProjectPolicy } from "../lib/policy.js";
 import { pushSingleMemory } from "../sync/git-sync.js";
 
 const logger = createLogger(logLevelFromEnv());
+
+// Body delta threshold for triggering dedup on update (chars).
+const SIGNIFICANT_BODY_DELTA = 100;
 
 export async function handleMemoryUpdate(
   repo: MemoriesRepo,
@@ -22,6 +26,7 @@ export async function handleMemoryUpdate(
     memory_type?: string;
     pinned?: boolean;
     project_path?: string;
+    dedup?: "strict" | "warn" | "off";
   },
   config?: Config,
   embRepo?: EmbeddingsRepo,
@@ -91,6 +96,61 @@ export async function handleMemoryUpdate(
     }
   }
 
+  // Issue #8: dedup check on update — fires only when the change is significant.
+  // Significant = title changed OR body grew/shrank by more than SIGNIFICANT_BODY_DELTA chars.
+  let dedupWarnMessage: string | null = null;
+  if (config && embRepo && db) {
+    const cfg = config.search.embeddings;
+    if (cfg.enabled && cfg.dedup && cfg.dedupCheckOnUpdate) {
+      const titleChanged = params.title !== undefined && params.title !== current.title;
+      const bodyDelta = params.content !== undefined
+        ? Math.abs(params.content.length - (current.body ?? "").length)
+        : 0;
+      const significantChange = titleChanged || bodyDelta > SIGNIFICANT_BODY_DELTA;
+
+      if (significantChange) {
+        const provider = createProvider(cfg);
+        if (provider) {
+          const mode = params.dedup ?? cfg.dedupDefaultMode;
+          if (mode !== "off") {
+            // Resolve project id for scoping
+            let projectId: string | null = null;
+            if (params.project_path) {
+              const row = db.prepare("SELECT id FROM projects WHERE root_path = ?").get(params.project_path) as
+                | { id: string } | undefined;
+              projectId = row?.id ?? null;
+            }
+
+            const updated = repo.getById(params.memory_id);
+            const text = `${updated?.title ?? params.title ?? ""}\n\n${updated?.body ?? params.content ?? ""}`;
+            const { duplicate, skipped } = await findDuplicate(
+              db,
+              embRepo,
+              provider,
+              text,
+              projectId,
+              cfg.dedupThreshold,
+              cfg.dedupMaxScan,
+              params.memory_id, // exclude self
+            );
+
+            if (!skipped && duplicate) {
+              const sim = duplicate.similarity.toFixed(2);
+              if (mode === "strict") {
+                // NOTE: the update has already been committed above; we return the warning as info
+                // (strict on update surfaces the info but does not undo the store since the update is in-place)
+                dedupWarnMessage = `Near-duplicate of "${duplicate.title}" (sim ${sim}, id ${duplicate.memoryId}). Consider memory_update or memory_link.`;
+              } else {
+                // mode === "warn"
+                dedupWarnMessage = `Near-duplicate of "${duplicate.title}" (sim ${sim}, id ${duplicate.memoryId}). Consider memory_update or memory_link.`;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   // Issue #11: auto-push updated memory when scope=team and autoPushOnStore=true
   if (db && config && config.sync.enabled && config.sync.autoPushOnStore) {
     const updated = repo.getById(params.memory_id);
@@ -104,5 +164,6 @@ export async function handleMemoryUpdate(
     }
   }
 
-  return `Memory updated: ${params.memory_id}`;
+  const baseMsg = `Memory updated: ${params.memory_id}`;
+  return dedupWarnMessage ? `${baseMsg}\n⚠ ${dedupWarnMessage}` : baseMsg;
 }
