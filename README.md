@@ -19,6 +19,54 @@ Install from npm:
     memento-mcp import claude-md
     memento-mcp ui
 
+## Documentation
+
+### Getting started
+
+- [Installation & client setup](docs/install.md)
+- [Importing CLAUDE.md](docs/import.md)
+
+### Features
+
+- [Team-scoped memories with git sync](docs/team-sync.md)
+- [Per-project policy](docs/policy.md)
+- [Optional embeddings](docs/embeddings.md)
+- [End-of-session summaries](docs/session-summaries.md)
+- [Privacy](docs/privacy.md)
+- [Token-aware search](docs/search.md)
+- [Mode profiles](docs/mode-profiles.md)
+- [Vault integration](docs/vault.md)
+- [Web inspector](docs/web-inspector.md)
+
+### Reference
+
+- [Configuration](docs/configuration.md)
+- [MCP tools reference](docs/mcp-tools.md)
+- [Development & troubleshooting](docs/development.md)
+
+## Requirements
+
+- Node.js 18 or newer
+- npm
+- An MCP-compatible client, such as Claude Code, Codex, Cursor, or another stdio-MCP client
+
+Optional:
+
+- Obsidian vault for curated Markdown knowledge
+- OpenAI key for semantic embeddings
+- Anthropic or OpenAI key for LLM-assisted session summaries
+- git repo for team memory sync
+
+## Package
+
+Published on npm as:
+
+    @luispmonteiro/memento-memory-mcp
+
+Install globally:
+
+    npm install -g @luispmonteiro/memento-memory-mcp
+
 ## What it does
 
 `memento-mcp` gives your AI coding tools a memory layer that survives across sessions, machines, and teammates.
@@ -344,54 +392,6 @@ Preference: In this project, bug fixes and improvements are tracked separately i
 Scope: team
 
 Tags: process, release-notes
-
-## Documentation
-
-### Getting started
-
-- [Installation & client setup](docs/install.md)
-- [Importing CLAUDE.md](docs/import.md)
-
-### Features
-
-- [Team-scoped memories with git sync](docs/team-sync.md)
-- [Per-project policy](docs/policy.md)
-- [Optional embeddings](docs/embeddings.md)
-- [End-of-session summaries](docs/session-summaries.md)
-- [Privacy](docs/privacy.md)
-- [Token-aware search](docs/search.md)
-- [Mode profiles](docs/mode-profiles.md)
-- [Vault integration](docs/vault.md)
-- [Web inspector](docs/web-inspector.md)
-
-### Reference
-
-- [Configuration](docs/configuration.md)
-- [MCP tools reference](docs/mcp-tools.md)
-- [Development & troubleshooting](docs/development.md)
-
-## Requirements
-
-- Node.js 18 or newer
-- npm
-- An MCP-compatible client, such as Claude Code, Codex, Cursor, or another stdio-MCP client
-
-Optional:
-
-- Obsidian vault for curated Markdown knowledge
-- OpenAI key for semantic embeddings
-- Anthropic or OpenAI key for LLM-assisted session summaries
-- git repo for team memory sync
-
-## Package
-
-Published on npm as:
-
-    @luispmonteiro/memento-memory-mcp
-
-Install globally:
-
-    npm install -g @luispmonteiro/memento-memory-mcp
 
 ## License
 
