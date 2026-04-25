@@ -166,6 +166,7 @@ describe("end-to-end v2", () => {
 
     const score = computeAdaptiveScore({
       fts_relevance: 0.7,
+      embedding_relevance: 0,
       importance: 0.5,
       decay: computeExponentialDecay(0),
       utility,
@@ -175,7 +176,7 @@ describe("end-to-end v2", () => {
     expect(score).toBeLessThanOrEqual(1);
   });
 
-  it("hooks still work (session + search) with db as first arg (K6)", () => {
+  it("hooks still work (session + search) with db as first arg (K6)", async () => {
     const projectId = memRepo.ensureProject("/e2e-hooks-proj");
     memRepo.store({
       title: "hook test mem",
@@ -188,7 +189,7 @@ describe("end-to-end v2", () => {
     const sessionOutput = processSessionHook(db, memRepo, pitRepo, sessRepo, DEFAULT_CONFIG);
     expect(sessionOutput).toContain("hook test mem");
 
-    const searchOutput = processSearchHook(
+    const searchOutput = await processSearchHook(
       db,
       "how does hook test work with memories?",
       memRepo,

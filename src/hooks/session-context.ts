@@ -30,6 +30,7 @@ export function processSessionHook(
     const utility = computeUtilityScore(db, m.id);
     const adaptive = computeAdaptiveScore({
       fts_relevance: 0.5, // no query context at session start — neutral
+      embedding_relevance: 0,
       importance: m.importance_score ?? 0.5,
       decay,
       utility,

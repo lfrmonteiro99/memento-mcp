@@ -209,6 +209,21 @@ CREATE TABLE IF NOT EXISTS vault_roots (
 );
 `,
   },
+  {
+    version: 4,
+    name: "embeddings",
+    sql: `
+CREATE TABLE IF NOT EXISTS embeddings (
+  memory_id   TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+  model       TEXT NOT NULL,
+  dim         INTEGER NOT NULL,
+  vector      BLOB NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model);
+`,
+  },
 ];
 
 const FTS_TRIGGERS_SQL = `

@@ -188,6 +188,85 @@ This file describes the vault layout for memento-mcp routing.
     console.log(`trivial-patterns: ${profile.trivialPatterns.length}`);
   }
 
+} else if (command === "backfill-embeddings") {
+  const { loadConfig, getDefaultConfigPath, getDefaultDbPath } = await import("../lib/config.js");
+  const { createDatabase } = await import("../db/database.js");
+  const { EmbeddingsRepo } = await import("../db/embeddings.js");
+  const { createProvider } = await import("../engine/embeddings/provider.js");
+
+  const config = loadConfig(getDefaultConfigPath());
+
+  // Parse flags
+  const args = argv.slice(3);
+  let model = config.search.embeddings.model;
+  let limit: number | undefined;
+  let dryRun = false;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--model" && args[i + 1]) { model = args[++i]; }
+    else if (args[i] === "--limit" && args[i + 1]) { limit = Number(args[++i]); }
+    else if (args[i] === "--dry-run") { dryRun = true; }
+  }
+
+  const db = createDatabase(config.database.path || getDefaultDbPath());
+  const embRepo = new EmbeddingsRepo(db);
+  const missing = embRepo.countMissing(model);
+
+  if (dryRun) {
+    console.log(`Would embed ${missing} memories (model: ${model}).`);
+    db.close();
+    process.exit(0);
+  }
+
+  const provider = createProvider({ ...config.search.embeddings, model, enabled: true });
+  if (!provider) {
+    console.error(`Embedding provider misconfigured: ensure ${config.search.embeddings.apiKeyEnv} is set and provider is supported.`);
+    db.close();
+    process.exit(1);
+  }
+
+  const batchSize = config.search.embeddings.batchSize;
+  let processed = 0;
+  const total = limit !== undefined ? Math.min(limit, missing) : missing;
+  const batch: Array<{ id: string; title: string; body: string }> = [];
+
+  for (const mem of embRepo.iterateMissing(model, batchSize)) {
+    if (limit !== undefined && processed >= limit) break;
+    batch.push(mem);
+    if (batch.length >= batchSize) {
+      const texts = batch.map(m => `${m.title}\n\n${m.body}`);
+      try {
+        const vectors = await provider.embed(texts);
+        for (let i = 0; i < batch.length; i++) {
+          embRepo.upsert(batch[i].id, provider.model, vectors[i]);
+        }
+      } catch (err) {
+        console.error(`Batch embed failed:`, err);
+      }
+      processed += batch.length;
+      console.log(`Processed ${processed}/${total}`);
+      batch.length = 0;
+    }
+  }
+
+  // Flush remaining
+  if (batch.length > 0) {
+    const texts = batch.map(m => `${m.title}\n\n${m.body}`);
+    try {
+      const vectors = await provider.embed(texts);
+      for (let i = 0; i < batch.length; i++) {
+        embRepo.upsert(batch[i].id, provider.model, vectors[i]);
+      }
+    } catch (err) {
+      console.error(`Batch embed failed:`, err);
+    }
+    processed += batch.length;
+    console.log(`Processed ${processed}/${total}`);
+  }
+
+  console.log(`Done. Embedded ${processed} memories.`);
+  db.close();
+
 } else if (command === "--version" || command === "-v") {
   console.log("memento-mcp v1.0.0");
 

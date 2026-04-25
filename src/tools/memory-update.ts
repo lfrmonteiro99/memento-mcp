@@ -1,4 +1,11 @@
+// src/tools/memory-update.ts
 import type { MemoriesRepo } from "../db/memories.js";
+import type { EmbeddingsRepo } from "../db/embeddings.js";
+import type { Config } from "../lib/config.js";
+import { createProvider } from "../engine/embeddings/provider.js";
+import { createLogger, logLevelFromEnv } from "../lib/logger.js";
+
+const logger = createLogger(logLevelFromEnv());
 
 export async function handleMemoryUpdate(
   repo: MemoriesRepo,
@@ -11,6 +18,8 @@ export async function handleMemoryUpdate(
     memory_type?: string;
     pinned?: boolean;
   },
+  config?: Config,
+  embRepo?: EmbeddingsRepo,
 ): Promise<string> {
   const patch: Parameters<MemoriesRepo["update"]>[1] = {};
   if (params.title !== undefined) patch.title = params.title;
@@ -33,5 +42,19 @@ export async function handleMemoryUpdate(
   if (!ok) {
     return `Memory not found: ${params.memory_id}`;
   }
+
+  // Fire-and-forget re-embedding when title or body changes — do NOT await.
+  if (config && embRepo && (params.title !== undefined || params.content !== undefined)) {
+    const provider = createProvider(config.search.embeddings);
+    if (provider) {
+      const updated = repo.getById(params.memory_id);
+      if (updated) {
+        provider.embed([`${updated.title}\n\n${updated.body ?? ""}`])
+          .then(([v]) => embRepo.upsert(params.memory_id, provider.model, v))
+          .catch(err => logger.warn(`embed failed for ${params.memory_id}: ${err}`));
+      }
+    }
+  }
+
   return `Memory updated: ${params.memory_id}`;
 }

@@ -167,22 +167,22 @@ describe("v1 regression: hook contracts", () => {
     expect(output).toContain("Session pitfall");
   });
 
-  it("search hook returns context for non-trivial prompts", () => {
+  it("search hook returns context for non-trivial prompts", async () => {
     memRepo.store({ title: "Auth flow guide", body: "OAuth2 token validation patterns", memoryType: "fact", scope: "global" });
-    const output = processSearchHook(db, "how does auth flow work with OAuth2?", memRepo, sessRepo, config);
+    const output = await processSearchHook(db, "how does auth flow work with OAuth2?", memRepo, sessRepo, config);
     expect(output).toContain("Auth flow");
   });
 
-  it("search hook returns empty for trivial prompts", () => {
+  it("search hook returns empty for trivial prompts", async () => {
     memRepo.store({ title: "test", body: "content", memoryType: "fact", scope: "global" });
-    const output = processSearchHook(db, "ok", memRepo, sessRepo, config);
+    const output = await processSearchHook(db, "ok", memRepo, sessRepo, config);
     expect(output).toBe("");
   });
 
-  it("search hook debits session budget", () => {
+  it("search hook debits session budget", async () => {
     memRepo.store({ title: "budget test", body: "something to search", memoryType: "fact", scope: "global" });
     const before = sessRepo.getOrCreate(config.budget);
-    processSearchHook(db, "how does budget test work?", memRepo, sessRepo, config);
+    await processSearchHook(db, "how does budget test work?", memRepo, sessRepo, config);
     const after = sessRepo.getOrCreate(config.budget);
     expect(after.spent).toBeGreaterThan(before.spent);
   });
@@ -236,9 +236,9 @@ describe("v1 regression: database schema", () => {
     expect(tables).toContain("decisions_fts");
   });
 
-  it("schema version is 3 for fresh DB (v3 migration applied)", () => {
+  it("schema version is 4 for fresh DB (v4 migration applied)", () => {
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(3);
+    expect(version).toBe(4);
   });
 
   it("FTS sync triggers exist", () => {

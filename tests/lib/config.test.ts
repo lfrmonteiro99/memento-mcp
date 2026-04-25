@@ -191,3 +191,47 @@ describe("v2 config fields", () => {
     expect(config.compression.enabled).toBe(true);
   });
 });
+
+describe("embeddings config", () => {
+  const tmpDir = join(tmpdir(), `memento-config-emb-${process.pid}-${randomUUID()}`);
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("DEFAULT_CONFIG has embeddings disabled by default", () => {
+    expect(DEFAULT_CONFIG.search.embeddings.enabled).toBe(false);
+    expect(DEFAULT_CONFIG.search.embeddings.provider).toBe("openai");
+    expect(DEFAULT_CONFIG.search.embeddings.model).toBe("text-embedding-3-small");
+    expect(DEFAULT_CONFIG.search.embeddings.dim).toBe(1536);
+    expect(DEFAULT_CONFIG.search.embeddings.topK).toBe(20);
+    expect(DEFAULT_CONFIG.search.embeddings.similarityThreshold).toBe(0.5);
+    expect(DEFAULT_CONFIG.search.embeddings.batchSize).toBe(32);
+    expect(DEFAULT_CONFIG.search.embeddings.requestTimeoutMs).toBe(10000);
+  });
+
+  it("loads [search.embeddings] TOML section", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    const cfgPath = join(tmpDir, "config.toml");
+    writeFileSync(
+      cfgPath,
+      '[search.embeddings]\nenabled = true\nmodel = "text-embedding-ada-002"\ntop_k = 10\nsimilarity_threshold = 0.7\n',
+    );
+    const config = loadConfig(cfgPath);
+    expect(config.search.embeddings.enabled).toBe(true);
+    expect(config.search.embeddings.model).toBe("text-embedding-ada-002");
+    expect(config.search.embeddings.topK).toBe(10);
+    expect(config.search.embeddings.similarityThreshold).toBe(0.7);
+    // Other defaults preserved
+    expect(config.search.embeddings.batchSize).toBe(32);
+  });
+
+  it("preserves all other search defaults when only embeddings is set", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    const cfgPath = join(tmpDir, "config.toml");
+    writeFileSync(cfgPath, '[search.embeddings]\nenabled = false\n');
+    const config = loadConfig(cfgPath);
+    expect(config.search.maxResults).toBe(10); // default
+    expect(config.search.ftsPrefixMatching).toBe(true); // default
+  });
+});

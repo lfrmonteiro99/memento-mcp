@@ -1,7 +1,7 @@
 // tests/engine/adaptive-ranker.test.ts
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-  computeAdaptiveScore, computeUtilityScore, SCORE_WEIGHTS, AdaptiveScoreFactors
+  computeAdaptiveScore, computeUtilityScore, SCORE_WEIGHTS, SCORE_WEIGHTS_WITH_EMBEDDINGS, AdaptiveScoreFactors
 } from "../../src/engine/adaptive-ranker.js";
 import { createDatabase } from "../../src/db/database.js";
 import { rmSync } from "node:fs";
@@ -10,9 +10,10 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 describe("computeAdaptiveScore", () => {
-  it("returns weighted sum of all factors", () => {
+  it("returns weighted sum of all factors (embeddings disabled)", () => {
     const factors: AdaptiveScoreFactors = {
       fts_relevance: 1.0,
+      embedding_relevance: 0,
       importance: 1.0,
       decay: 1.0,
       utility: 1.0,
@@ -25,21 +26,41 @@ describe("computeAdaptiveScore", () => {
 
   it("returns 0 when all factors are 0", () => {
     const factors: AdaptiveScoreFactors = {
-      fts_relevance: 0, importance: 0, decay: 0, utility: 0, recency_bonus: 0,
+      fts_relevance: 0, embedding_relevance: 0, importance: 0, decay: 0, utility: 0, recency_bonus: 0,
     };
     expect(computeAdaptiveScore(factors)).toBeCloseTo(0, 2);
   });
 
-  it("FTS relevance has highest single weight (0.30)", () => {
-    const withFts: AdaptiveScoreFactors = { fts_relevance: 1.0, importance: 0, decay: 0, utility: 0, recency_bonus: 0 };
-    const withUtility: AdaptiveScoreFactors = { fts_relevance: 0, importance: 0, decay: 0, utility: 1.0, recency_bonus: 0 };
+  it("FTS relevance has highest single weight (0.30) in base mode", () => {
+    const withFts: AdaptiveScoreFactors = { fts_relevance: 1.0, embedding_relevance: 0, importance: 0, decay: 0, utility: 0, recency_bonus: 0 };
+    const withUtility: AdaptiveScoreFactors = { fts_relevance: 0, embedding_relevance: 0, importance: 0, decay: 0, utility: 1.0, recency_bonus: 0 };
     expect(computeAdaptiveScore(withFts)).toBeGreaterThan(computeAdaptiveScore(withUtility));
   });
 
-  it("weights sum to 1.0", () => {
+  it("base weights sum to 1.0", () => {
     const total = SCORE_WEIGHTS.fts_relevance + SCORE_WEIGHTS.importance +
       SCORE_WEIGHTS.decay + SCORE_WEIGHTS.utility + SCORE_WEIGHTS.recency_bonus;
     expect(total).toBeCloseTo(1.0, 5);
+  });
+
+  it("embedding weights sum to 1.0", () => {
+    const total = SCORE_WEIGHTS_WITH_EMBEDDINGS.fts_relevance +
+      SCORE_WEIGHTS_WITH_EMBEDDINGS.embedding_relevance +
+      SCORE_WEIGHTS_WITH_EMBEDDINGS.importance +
+      SCORE_WEIGHTS_WITH_EMBEDDINGS.decay +
+      SCORE_WEIGHTS_WITH_EMBEDDINGS.utility +
+      SCORE_WEIGHTS_WITH_EMBEDDINGS.recency_bonus;
+    expect(total).toBeCloseTo(1.0, 5);
+  });
+
+  it("uses embedding weight set when embeddingsEnabled=true", () => {
+    const factors: AdaptiveScoreFactors = {
+      fts_relevance: 1.0, embedding_relevance: 1.0, importance: 1.0,
+      decay: 1.0, utility: 1.0, recency_bonus: 1.0,
+    };
+    const withEmb = computeAdaptiveScore(factors, true);
+    // 0.20+0.15+0.20+0.15+0.20+0.10 = 1.0
+    expect(withEmb).toBeCloseTo(1.0, 5);
   });
 });
 

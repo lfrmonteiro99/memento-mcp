@@ -35,7 +35,7 @@ describe("adaptive ranker integration: search-context hook", () => {
     rmSync(dbPath, { force: true });
   });
 
-  it("search hook ranks memory with high utility above memory with low utility (K6)", () => {
+  it("search hook ranks memory with high utility above memory with low utility (K6)", async () => {
     const highId = memRepo.store({
       title: "Authentication patterns: JWT tokens",
       body: "Use JWT for stateless auth. Verify signature on each request.",
@@ -61,7 +61,7 @@ describe("adaptive ranker integration: search-context hook", () => {
     }
     tracker.flush();
 
-    const output = processSearchHook(db, "how does authentication work with JWT?", memRepo, sessRepo, DEFAULT_CONFIG);
+    const output = await processSearchHook(db, "how does authentication work with JWT?", memRepo, sessRepo, DEFAULT_CONFIG);
 
     // highId should appear before lowId in the output
     const highPos = output.indexOf("JWT tokens");
@@ -71,13 +71,13 @@ describe("adaptive ranker integration: search-context hook", () => {
     expect(highPos).toBeLessThan(lowPos);
   });
 
-  it("search hook produces different top-N orderings for different utility distributions", () => {
+  it("search hook produces different top-N orderings for different utility distributions", async () => {
     // Both memories have identical bodies so FTS relevance is equal — utility drives rank.
     const a = memRepo.store({ title: "Query result A", body: "pipeline processing function used in query execution", memoryType: "fact", scope: "global" });
     const b = memRepo.store({ title: "Query result B", body: "pipeline processing function used in query execution", memoryType: "fact", scope: "global" });
 
     // Scenario 1: equal utility — record nothing yet.
-    const out1 = processSearchHook(db, "how does pipeline query processing work?", memRepo, sessRepo, DEFAULT_CONFIG);
+    const out1 = await processSearchHook(db, "how does pipeline query processing work?", memRepo, sessRepo, DEFAULT_CONFIG);
 
     // Scenario 2: heavily boost B's utility so B must rank before A.
     for (let i = 0; i < 20; i++) {
@@ -90,7 +90,7 @@ describe("adaptive ranker integration: search-context hook", () => {
       tracker.track({ session_id: "s1", memory_id: a, event_type: "injection", event_data: "{}" });
     }
     tracker.flush();
-    const out2 = processSearchHook(db, "how does pipeline query processing work?", memRepo, sessRepo, DEFAULT_CONFIG);
+    const out2 = await processSearchHook(db, "how does pipeline query processing work?", memRepo, sessRepo, DEFAULT_CONFIG);
 
     // After utility boost: B now appears before A in the output (position changes).
     const posB2 = out2.indexOf("Query result B");

@@ -33,6 +33,17 @@ export interface Config {
     keywordMaxTokens: number;
     preservePhrases: boolean;
     ftsPrefixMatching: boolean;
+    embeddings: {
+      enabled: boolean;
+      provider: "openai" | "ollama";
+      model: string;
+      apiKeyEnv: string;
+      dim: number;
+      topK: number;
+      similarityThreshold: number;
+      batchSize: number;
+      requestTimeoutMs: number;
+    };
   };
   hooks: {
     trivialSkip: boolean;
@@ -115,6 +126,17 @@ export const DEFAULT_CONFIG: Config = {
     keywordMaxTokens: 8,
     preservePhrases: true,
     ftsPrefixMatching: true,
+    embeddings: {
+      enabled: false,
+      provider: "openai",
+      model: "text-embedding-3-small",
+      apiKeyEnv: "OPENAI_API_KEY",
+      dim: 1536,
+      topK: 20,
+      similarityThreshold: 0.5,
+      batchSize: 32,
+      requestTimeoutMs: 10000,
+    },
   },
   hooks: {
     trivialSkip: true,
@@ -215,6 +237,18 @@ export function loadConfig(configPath: string): Config {
     if (toml.search.keyword_max_tokens != null) config.search.keywordMaxTokens = Number(toml.search.keyword_max_tokens);
     if (toml.search.preserve_phrases != null) config.search.preservePhrases = Boolean(toml.search.preserve_phrases);
     if (toml.search.fts_prefix_matching != null) config.search.ftsPrefixMatching = Boolean(toml.search.fts_prefix_matching);
+    if (toml.search.embeddings && typeof toml.search.embeddings === "object") {
+      const emb = toml.search.embeddings;
+      if (emb.enabled != null) config.search.embeddings.enabled = Boolean(emb.enabled);
+      if (emb.provider) config.search.embeddings.provider = String(emb.provider) as "openai" | "ollama";
+      if (emb.model) config.search.embeddings.model = String(emb.model);
+      if (emb.api_key_env) config.search.embeddings.apiKeyEnv = String(emb.api_key_env);
+      if (emb.dim != null) config.search.embeddings.dim = Number(emb.dim);
+      if (emb.top_k != null) config.search.embeddings.topK = Number(emb.top_k);
+      if (emb.similarity_threshold != null) config.search.embeddings.similarityThreshold = Number(emb.similarity_threshold);
+      if (emb.batch_size != null) config.search.embeddings.batchSize = Number(emb.batch_size);
+      if (emb.request_timeout_ms != null) config.search.embeddings.requestTimeoutMs = Number(emb.request_timeout_ms);
+    }
   }
   if (toml.hooks) {
     if (toml.hooks.trivial_skip != null) config.hooks.trivialSkip = Boolean(toml.hooks.trivial_skip);

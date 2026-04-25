@@ -6,6 +6,7 @@ import { MemoriesRepo } from "./db/memories.js";
 import { DecisionsRepo } from "./db/decisions.js";
 import { PitfallsRepo } from "./db/pitfalls.js";
 import { SessionsRepo } from "./db/sessions.js";
+import { EmbeddingsRepo } from "./db/embeddings.js";
 import { loadConfig, getDefaultConfigPath, getDefaultDbPath } from "./lib/config.js";
 import { createLogger, logLevelFromEnv } from "./lib/logger.js";
 import { handleMemoryStore } from "./tools/memory-store.js";
@@ -35,6 +36,7 @@ const memRepo = new MemoriesRepo(db);
 const decRepo = new DecisionsRepo(db);
 const pitRepo = new PitfallsRepo(db);
 const sessRepo = new SessionsRepo(db);
+const embRepo = new EmbeddingsRepo(db);
 const analyticsTracker = new AnalyticsTracker(db, { flushThreshold: config.analytics.flushThreshold });
 const disposeFlush = installFlushOnExit(analyticsTracker);
 
@@ -159,7 +161,7 @@ server.tool(
     vault_note_title: z.string().default(""),
   },
   async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryStore(memRepo, params, db, config) }],
+    content: [{ type: "text" as const, text: await handleMemoryStore(memRepo, params, db, config, embRepo) }],
   })
 );
 
@@ -309,7 +311,7 @@ server.tool(
     pinned: z.boolean().optional(),
   },
   async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryUpdate(memRepo, params) }],
+    content: [{ type: "text" as const, text: await handleMemoryUpdate(memRepo, params, config, embRepo) }],
   })
 );
 

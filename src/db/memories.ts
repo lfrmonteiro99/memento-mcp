@@ -165,6 +165,14 @@ export class MemoriesRepo {
     `).all(...params) as any[];
   }
 
+  getMany(ids: string[]): any[] {
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => "?").join(",");
+    return this.db.prepare(
+      `SELECT * FROM memories WHERE id IN (${placeholders}) AND deleted_at IS NULL`
+    ).all(...ids) as any[];
+  }
+
   batchUpdateAccess(ids: string[]): void {
     if (ids.length === 0) return;
     const now = nowIso();

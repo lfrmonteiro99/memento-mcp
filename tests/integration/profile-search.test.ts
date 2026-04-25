@@ -24,7 +24,7 @@ describe("profile-aware search hook integration", () => {
     db.close();
   });
 
-  it("Portuguese profile extracts keywords without Portuguese stop-words", () => {
+  it("Portuguese profile extracts keywords without Portuguese stop-words", async () => {
     // Store a Portuguese memory
     const projId = memRepo.ensureProject("/test");
     memRepo.store({
@@ -44,7 +44,7 @@ describe("profile-aware search hook integration", () => {
     };
 
     // Run search hook with Portuguese query
-    const result = processSearchHook(
+    const result = await processSearchHook(
       db,
       "como configurar",
       memRepo,
@@ -57,7 +57,7 @@ describe("profile-aware search hook integration", () => {
     expect(result.length).toBeGreaterThan(0);
   });
 
-  it("English profile uses English stop-words, misses Portuguese queries", () => {
+  it("English profile uses English stop-words, misses Portuguese queries", async () => {
     // Store a Portuguese memory
     const projId = memRepo.ensureProject("/test");
     memRepo.store({
@@ -78,7 +78,7 @@ describe("profile-aware search hook integration", () => {
 
     // Run search with Portuguese words that are not in memory index
     // (English stop-words are used, so keywords might be different)
-    const result = processSearchHook(
+    const result = await processSearchHook(
       db,
       "oi tudo bem",
       memRepo,
