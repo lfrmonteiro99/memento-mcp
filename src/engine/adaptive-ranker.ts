@@ -3,12 +3,14 @@ import type Database from "better-sqlite3";
 
 export interface AdaptiveScoreFactors {
   fts_relevance: number;
+  embedding_relevance: number;
   importance: number;
   decay: number;
   utility: number;
   recency_bonus: number;
 }
 
+// Weights when embeddings are disabled (FTS-only mode)
 export const SCORE_WEIGHTS = {
   fts_relevance: 0.30,
   importance: 0.20,
@@ -17,13 +19,38 @@ export const SCORE_WEIGHTS = {
   recency_bonus: 0.10,
 };
 
-export function computeAdaptiveScore(factors: AdaptiveScoreFactors): number {
+// Weights when embeddings are enabled (hybrid FTS5 + vector mode)
+export const SCORE_WEIGHTS_WITH_EMBEDDINGS = {
+  fts_relevance: 0.20,
+  embedding_relevance: 0.15,
+  importance: 0.20,
+  decay: 0.15,
+  utility: 0.20,
+  recency_bonus: 0.10,
+};
+
+export function computeAdaptiveScore(
+  factors: AdaptiveScoreFactors,
+  embeddingsEnabled = false,
+): number {
+  if (embeddingsEnabled) {
+    const w = SCORE_WEIGHTS_WITH_EMBEDDINGS;
+    return (
+      factors.fts_relevance * w.fts_relevance +
+      factors.embedding_relevance * w.embedding_relevance +
+      factors.importance * w.importance +
+      factors.decay * w.decay +
+      factors.utility * w.utility +
+      factors.recency_bonus * w.recency_bonus
+    );
+  }
+  const w = SCORE_WEIGHTS;
   return (
-    factors.fts_relevance * SCORE_WEIGHTS.fts_relevance +
-    factors.importance * SCORE_WEIGHTS.importance +
-    factors.decay * SCORE_WEIGHTS.decay +
-    factors.utility * SCORE_WEIGHTS.utility +
-    factors.recency_bonus * SCORE_WEIGHTS.recency_bonus
+    factors.fts_relevance * w.fts_relevance +
+    factors.importance * w.importance +
+    factors.decay * w.decay +
+    factors.utility * w.utility +
+    factors.recency_bonus * w.recency_bonus
   );
 }
 

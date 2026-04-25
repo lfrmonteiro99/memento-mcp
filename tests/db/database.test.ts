@@ -38,14 +38,14 @@ describe("database", () => {
 
   it("tracks schema version via user_version", () => {
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(3);
+    expect(version).toBe(7);
   });
 
   it("is idempotent — calling createDatabase twice on same path doesn't error", () => {
     db.close();
     const db2 = createDatabase(dbPath);
     const version = db2.pragma("user_version", { simple: true });
-    expect(version).toBe(3);
+    expect(version).toBe(7);
     db2.close();
     db = createDatabase(dbPath); // re-open for afterEach
   });

@@ -4,19 +4,27 @@ import { readFileMemories } from "../lib/file-memory.js";
 import { formatDetail } from "../lib/formatter.js";
 import type { Config } from "../lib/config.js";
 import { getVaultNoteById, readVaultNoteBody } from "../engine/vault-index.js";
+import { hasPrivate } from "../engine/privacy.js";
 
 const BODY_MODE_EXPAND: Set<string> = new Set(["skill", "playbook", "decision"]);
+
+/** Count the number of <private>...</private> regions in text. */
+function countPrivateRegions(text: string): number {
+  return (text.match(/<private>[\s\S]*?<\/private>/g) ?? []).length;
+}
 
 export async function handleMemoryGet(
   repo: MemoriesRepo,
   db: Database.Database,
   config: Config,
-  params: { memory_id: string },
+  params: { memory_id: string; reveal_private?: boolean },
 ): Promise<string> {
+  const revealPrivate = params.reveal_private === true;
+
   if (params.memory_id.startsWith("file:")) {
     const all = readFileMemories();
     const match = all.find(f => f.id === params.memory_id);
-    return match ? formatDetail(match) : "Memory not found.";
+    return match ? formatDetail(match, revealPrivate) : "Memory not found.";
   }
 
   if (params.memory_id.startsWith("vault:")) {
@@ -45,5 +53,26 @@ export async function handleMemoryGet(
   }
 
   const mem = repo.getById(params.memory_id);
-  return mem ? formatDetail(mem) : "Memory not found.";
+  if (!mem) return "Memory not found.";
+
+  // If reveal_private requested, emit analytics event when private content exists.
+  if (revealPrivate && hasPrivate(mem.body ?? "")) {
+    const regions = countPrivateRegions(mem.body ?? "");
+    try {
+      db.prepare(`
+        INSERT INTO analytics_events (session_id, project_id, memory_id, event_type, event_data, created_at)
+        VALUES ('system', ?, ?, 'private_revealed', ?, datetime('now'))
+      `).run(mem.project_id ?? null, mem.id, JSON.stringify({ memory_id: mem.id, regions }));
+    } catch {
+      // Analytics failure must not block memory retrieval.
+    }
+  }
+
+  const text = formatDetail(mem, revealPrivate);
+
+  if (revealPrivate && hasPrivate(mem.body ?? "")) {
+    return `> ⚠ Showing private content. Do not share this output.\n\n${text}`;
+  }
+
+  return text;
 }

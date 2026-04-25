@@ -4,6 +4,13 @@ import { homedir, platform } from "node:os";
 import { parse as parseTOML } from "smol-toml";
 import { createLogger, logLevelFromEnv } from "./logger.js";
 
+export interface ProfileConfig {
+  id: string;
+  extraStopWords: string[];
+  extraTrivialPatterns: string[];
+  locale: string;
+}
+
 export interface VaultConfig {
   enabled: boolean;
   path: string;
@@ -17,8 +24,28 @@ export interface VaultConfig {
   autoPromoteTypes: string[];
 }
 
+export interface SessionEndLlmConfig {
+  provider: "anthropic" | "openai";
+  model: string;
+  apiKeyEnv: string;
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  requestTimeoutMs: number;
+  fallbackToDeterministic: boolean;
+}
+
+export interface SyncConfig {
+  enabled: boolean;
+  autoPushOnStore: boolean;
+  folder: string;
+  includePrivateInFiles: boolean;
+  maxFutureDriftHours: number;
+  schemaVersion: number;
+}
+
 export interface Config {
   budget: { total: number; floor: number; refill: number; sessionTimeout: number };
+  sync: SyncConfig;
   search: {
     defaultDetail: "index" | "summary" | "full";
     maxResults: number;
@@ -26,6 +53,22 @@ export interface Config {
     keywordMaxTokens: number;
     preservePhrases: boolean;
     ftsPrefixMatching: boolean;
+    embeddings: {
+      enabled: boolean;
+      provider: "openai" | "ollama";
+      model: string;
+      apiKeyEnv: string;
+      dim: number;
+      topK: number;
+      similarityThreshold: number;
+      batchSize: number;
+      requestTimeoutMs: number;
+      dedup: boolean;
+      dedupThreshold: number;
+      dedupDefaultMode: "strict" | "warn" | "off";
+      dedupCheckOnUpdate: boolean;
+      dedupMaxScan: number;
+    };
   };
   hooks: {
     trivialSkip: boolean;
@@ -33,9 +76,16 @@ export interface Config {
     sessionStartPitfalls: number;
     customTrivialPatterns: string[];
     analyticsReminderIntervalSessions: number;
+    sessionEndSummarize: boolean;
+    sessionEndMinCaptures: number;
+    sessionEndMaxBodyTokens: number;
+    sessionEndKeepOriginals: boolean;
+    summarizeMode: "deterministic" | "llm";
+    sessionEndLlm: SessionEndLlmConfig;
   };
   pruning: { enabled: boolean; maxAgeDays: number; minImportance: number; intervalHours: number };
   database: { path: string };
+  profile: ProfileConfig;
   vault: VaultConfig;
   decay: { type: "exponential" | "step"; halfLifeDays: number };
   autoCapture: {
@@ -98,8 +148,18 @@ export const DEFAULT_VAULT_CONFIG: VaultConfig = {
   autoPromoteTypes: [],
 };
 
+export const DEFAULT_SYNC_CONFIG: SyncConfig = {
+  enabled: true,
+  autoPushOnStore: false,
+  folder: ".memento",
+  includePrivateInFiles: false,
+  maxFutureDriftHours: 24,
+  schemaVersion: 1,
+};
+
 export const DEFAULT_CONFIG: Config = {
   budget: { total: 8000, floor: 500, refill: 200, sessionTimeout: 1800 },
+  sync: { ...DEFAULT_SYNC_CONFIG },
   search: {
     defaultDetail: "index",
     maxResults: 10,
@@ -107,6 +167,22 @@ export const DEFAULT_CONFIG: Config = {
     keywordMaxTokens: 8,
     preservePhrases: true,
     ftsPrefixMatching: true,
+    embeddings: {
+      enabled: false,
+      provider: "openai",
+      model: "text-embedding-3-small",
+      apiKeyEnv: "OPENAI_API_KEY",
+      dim: 1536,
+      topK: 20,
+      similarityThreshold: 0.5,
+      batchSize: 32,
+      requestTimeoutMs: 10000,
+      dedup: false,
+      dedupThreshold: 0.92,
+      dedupDefaultMode: "warn" as "strict" | "warn" | "off",
+      dedupCheckOnUpdate: true,
+      dedupMaxScan: 2000,
+    },
   },
   hooks: {
     trivialSkip: true,
@@ -114,9 +190,32 @@ export const DEFAULT_CONFIG: Config = {
     sessionStartPitfalls: 5,
     customTrivialPatterns: [],
     analyticsReminderIntervalSessions: 20,
+    sessionEndSummarize: true,
+    sessionEndMinCaptures: 2,
+    sessionEndMaxBodyTokens: 1500,
+    sessionEndKeepOriginals: false,
+    summarizeMode: "deterministic" as "deterministic" | "llm",
+    sessionEndLlm: {
+      provider: "anthropic" as "anthropic" | "openai",
+      // Default model uses an alias (not a dated ID) to avoid 404s when models retire.
+      model: "claude-haiku-3-5",
+      apiKeyEnv: "ANTHROPIC_API_KEY",
+      maxInputTokens: 4000,
+      maxOutputTokens: 800,
+      // Must be less than the SessionEnd hook subprocess timeout (10s in Claude Code today).
+      // If the LLM call exceeds this, the hook falls back to the deterministic summary.
+      requestTimeoutMs: 8000,
+      fallbackToDeterministic: true,
+    },
   },
   pruning: { enabled: true, maxAgeDays: 60, minImportance: 0.3, intervalHours: 24 },
   database: { path: "" },
+  profile: {
+    id: "english",
+    extraStopWords: [],
+    extraTrivialPatterns: [],
+    locale: "",
+  },
   vault: { ...DEFAULT_VAULT_CONFIG },
   decay: { type: "exponential", halfLifeDays: 14 },
   autoCapture: {
@@ -201,6 +300,23 @@ export function loadConfig(configPath: string): Config {
     if (toml.search.keyword_max_tokens != null) config.search.keywordMaxTokens = Number(toml.search.keyword_max_tokens);
     if (toml.search.preserve_phrases != null) config.search.preservePhrases = Boolean(toml.search.preserve_phrases);
     if (toml.search.fts_prefix_matching != null) config.search.ftsPrefixMatching = Boolean(toml.search.fts_prefix_matching);
+    if (toml.search.embeddings && typeof toml.search.embeddings === "object") {
+      const emb = toml.search.embeddings;
+      if (emb.enabled != null) config.search.embeddings.enabled = Boolean(emb.enabled);
+      if (emb.provider) config.search.embeddings.provider = String(emb.provider) as "openai" | "ollama";
+      if (emb.model) config.search.embeddings.model = String(emb.model);
+      if (emb.api_key_env) config.search.embeddings.apiKeyEnv = String(emb.api_key_env);
+      if (emb.dim != null) config.search.embeddings.dim = Number(emb.dim);
+      if (emb.top_k != null) config.search.embeddings.topK = Number(emb.top_k);
+      if (emb.similarity_threshold != null) config.search.embeddings.similarityThreshold = Number(emb.similarity_threshold);
+      if (emb.batch_size != null) config.search.embeddings.batchSize = Number(emb.batch_size);
+      if (emb.request_timeout_ms != null) config.search.embeddings.requestTimeoutMs = Number(emb.request_timeout_ms);
+      if (emb.dedup != null) config.search.embeddings.dedup = Boolean(emb.dedup);
+      if (emb.dedup_threshold != null) config.search.embeddings.dedupThreshold = Number(emb.dedup_threshold);
+      if (emb.dedup_default_mode) config.search.embeddings.dedupDefaultMode = String(emb.dedup_default_mode) as "strict" | "warn" | "off";
+      if (emb.dedup_check_on_update != null) config.search.embeddings.dedupCheckOnUpdate = Boolean(emb.dedup_check_on_update);
+      if (emb.dedup_max_scan != null) config.search.embeddings.dedupMaxScan = Number(emb.dedup_max_scan);
+    }
   }
   if (toml.hooks) {
     if (toml.hooks.trivial_skip != null) config.hooks.trivialSkip = Boolean(toml.hooks.trivial_skip);
@@ -209,6 +325,21 @@ export function loadConfig(configPath: string): Config {
     if (Array.isArray(toml.hooks.custom_trivial_patterns)) config.hooks.customTrivialPatterns = toml.hooks.custom_trivial_patterns.map(String);
     if (toml.hooks.analytics_reminder_interval_sessions != null) {
       config.hooks.analyticsReminderIntervalSessions = Number(toml.hooks.analytics_reminder_interval_sessions);
+    }
+    if (toml.hooks.session_end_summarize != null) config.hooks.sessionEndSummarize = Boolean(toml.hooks.session_end_summarize);
+    if (toml.hooks.session_end_min_captures != null) config.hooks.sessionEndMinCaptures = Number(toml.hooks.session_end_min_captures);
+    if (toml.hooks.session_end_max_body_tokens != null) config.hooks.sessionEndMaxBodyTokens = Number(toml.hooks.session_end_max_body_tokens);
+    if (toml.hooks.session_end_keep_originals != null) config.hooks.sessionEndKeepOriginals = Boolean(toml.hooks.session_end_keep_originals);
+    if (toml.hooks.summarize_mode) config.hooks.summarizeMode = String(toml.hooks.summarize_mode) as "deterministic" | "llm";
+    if (toml.hooks.session_end_llm && typeof toml.hooks.session_end_llm === "object") {
+      const llm = toml.hooks.session_end_llm;
+      if (llm.provider) config.hooks.sessionEndLlm.provider = String(llm.provider) as "anthropic" | "openai";
+      if (llm.model) config.hooks.sessionEndLlm.model = String(llm.model);
+      if (llm.api_key_env) config.hooks.sessionEndLlm.apiKeyEnv = String(llm.api_key_env);
+      if (llm.max_input_tokens != null) config.hooks.sessionEndLlm.maxInputTokens = Number(llm.max_input_tokens);
+      if (llm.max_output_tokens != null) config.hooks.sessionEndLlm.maxOutputTokens = Number(llm.max_output_tokens);
+      if (llm.request_timeout_ms != null) config.hooks.sessionEndLlm.requestTimeoutMs = Number(llm.request_timeout_ms);
+      if (llm.fallback_to_deterministic != null) config.hooks.sessionEndLlm.fallbackToDeterministic = Boolean(llm.fallback_to_deterministic);
     }
   }
   if (toml.pruning) {
@@ -286,6 +417,22 @@ export function loadConfig(configPath: string): Config {
   if (toml.file_memory) {
     if (toml.file_memory.cache_ttl_seconds != null) config.fileMemory.cacheTtlSeconds = Number(toml.file_memory.cache_ttl_seconds);
     if (toml.file_memory.enabled != null) config.fileMemory.enabled = Boolean(toml.file_memory.enabled);
+  }
+  if (toml.sync) {
+    const s = toml.sync;
+    if (s.enabled != null) config.sync.enabled = Boolean(s.enabled);
+    if (s.auto_push_on_store != null) config.sync.autoPushOnStore = Boolean(s.auto_push_on_store);
+    if (s.folder) config.sync.folder = String(s.folder);
+    if (s.include_private_in_files != null) config.sync.includePrivateInFiles = Boolean(s.include_private_in_files);
+    if (s.max_future_drift_hours != null) config.sync.maxFutureDriftHours = Number(s.max_future_drift_hours);
+    if (s.schema_version != null) config.sync.schemaVersion = Number(s.schema_version);
+  }
+  if (toml.profile) {
+    const p = toml.profile;
+    if (p.id) config.profile.id = String(p.id);
+    if (Array.isArray(p.extra_stop_words)) config.profile.extraStopWords = p.extra_stop_words.map(String);
+    if (Array.isArray(p.extra_trivial_patterns)) config.profile.extraTrivialPatterns = p.extra_trivial_patterns.map(String);
+    if (p.locale) config.profile.locale = String(p.locale);
   }
 
   return applyEnvOverrides(config);

@@ -2,6 +2,11 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { nowIso } from "./database.js";
+import { hasPrivate } from "../engine/privacy.js";
+import { scrubSecrets } from "../engine/text-utils.js";
+import { createLogger, logLevelFromEnv } from "../lib/logger.js";
+
+const logger = createLogger(logLevelFromEnv());
 
 function sanitizeFtsToken(token: string): string {
   return token.replace(/"/g, '""');
@@ -25,6 +30,7 @@ export interface StoreParams {
   supersedesId?: string;
   pin?: boolean;
   source?: string;           // M5: "user" (default) | "auto-capture" | "compression"
+  claudeSessionId?: string;  // Issue #3: Claude Code session ID for linking memories to sessions
 }
 
 export interface SearchOptions {
@@ -81,15 +87,31 @@ export class MemoriesRepo {
         .run(now, params.supersedesId);
     }
 
+    // Issue #12: scrub secrets from title and body before writing to DB.
+    const cleanTitle = scrubSecrets(params.title);
+    const cleanBody = scrubSecrets(params.body ?? "");
+    if (cleanTitle !== params.title) {
+      logger.warn(`Secret pattern detected and scrubbed in memory title (id=${id})`);
+    }
+    // Issue #4: warn if title contains private tags (tags don't redact in titles).
+    if (hasPrivate(params.title)) {
+      logger.warn(`Warning: <private> tags detected in memory title — tags do not redact in titles. Move sensitive content to body. (id=${id})`);
+    }
+
     // M5: source column included in the INSERT. Defaults to 'user' if not provided.
+    // Issue #3: claude_session_id column added in migration v5.
+    // Issue #4: has_private column added in migration v6.
+    const hasPrivateFlag = hasPrivate(cleanBody) ? 1 : 0;
     this.db.prepare(`
       INSERT INTO memories (id, project_id, memory_type, scope, title, body, tags,
                             importance_score, is_pinned, supersedes_memory_id, source,
+                            claude_session_id, has_private,
                             created_at, updated_at, last_accessed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, projectId, params.memoryType ?? "fact", params.scope ?? "project",
-           params.title, params.body, tagsStr, params.importance ?? 0.5,
+           cleanTitle, cleanBody, tagsStr, params.importance ?? 0.5,
            params.pin ? 1 : 0, params.supersedesId || null, params.source ?? "user",
+           params.claudeSessionId ?? null, hasPrivateFlag,
            now, now, now);
     return id;
   }
@@ -165,6 +187,14 @@ export class MemoriesRepo {
     `).all(...params) as any[];
   }
 
+  getMany(ids: string[]): any[] {
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => "?").join(",");
+    return this.db.prepare(
+      `SELECT * FROM memories WHERE id IN (${placeholders}) AND deleted_at IS NULL`
+    ).all(...ids) as any[];
+  }
+
   batchUpdateAccess(ids: string[]): void {
     if (ids.length === 0) return;
     const now = nowIso();
@@ -213,8 +243,23 @@ export class MemoriesRepo {
 
     const fields: string[] = [];
     const values: any[] = [];
-    if (patch.title !== undefined) { fields.push("title = ?"); values.push(patch.title); }
-    if (patch.body !== undefined) { fields.push("body = ?"); values.push(patch.body); }
+    // Issue #12: scrub secrets from title and body at write time.
+    if (patch.title !== undefined) {
+      const cleanTitle = scrubSecrets(patch.title);
+      if (cleanTitle !== patch.title) {
+        logger.warn(`Secret pattern detected and scrubbed in memory title during update (id=${id})`);
+      }
+      if (hasPrivate(patch.title)) {
+        logger.warn(`Warning: <private> tags detected in memory title — tags do not redact in titles. Move sensitive content to body. (id=${id})`);
+      }
+      fields.push("title = ?");
+      values.push(cleanTitle);
+    }
+    if (patch.body !== undefined) {
+      const cleanBody = scrubSecrets(patch.body);
+      fields.push("body = ?");
+      values.push(cleanBody);
+    }
     if (patch.tags !== undefined) { fields.push("tags = ?"); values.push(JSON.stringify(patch.tags)); }
     if (patch.importance !== undefined) {
       fields.push("importance_score = ?");
@@ -224,6 +269,12 @@ export class MemoriesRepo {
     if (patch.pinned !== undefined) { fields.push("is_pinned = ?"); values.push(patch.pinned ? 1 : 0); }
 
     if (fields.length === 0) return false;
+    // Issue #4: update has_private when body changes (use already-scrubbed value).
+    if (patch.body !== undefined) {
+      fields.push("has_private = ?");
+      // Re-use the scrubbed body already pushed into values above (idempotent if scrubbed again).
+      values.push(hasPrivate(scrubSecrets(patch.body)) ? 1 : 0);
+    }
     fields.push("updated_at = ?");
     values.push(nowIso());
     values.push(id);
@@ -252,5 +303,97 @@ export class MemoriesRepo {
         AND importance_score < ? AND last_accessed_at < datetime('now', ? || ' days')
     `).run(nowIso(), minImportance, `-${maxAgeDays}`);
     return result.changes;
+  }
+
+  /**
+   * Issue #9: prune stale memories for a specific project.
+   * Used by the per-project retention policy override in the maintenance loop.
+   */
+  pruneStaleByProject(projectId: string, maxAgeDays: number, minImportance: number): number {
+    const result = this.db.prepare(`
+      UPDATE memories SET deleted_at = ?
+      WHERE deleted_at IS NULL AND is_pinned = 0
+        AND project_id = ?
+        AND importance_score < ? AND last_accessed_at < datetime('now', ? || ' days')
+    `).run(nowIso(), projectId, minImportance, `-${maxAgeDays}`);
+    return result.changes;
+  }
+
+  /**
+   * Get memories created around a given memory (its chronological neighborhood).
+   * If sameSessionOnly is true:
+   *   - If focus.claude_session_id is set, prefer exact claude_session_id match.
+   *   - Fall back to ±2h created_at window when claude_session_id is null.
+   * If sameSessionOnly is false, return time-window-based neighbors regardless.
+   *
+   * @param focus - The memory to find neighbors for
+   * @param window - Number of memories to return on each side (default 3, so ±3 = up to 6 neighbors)
+   * @param sameSessionOnly - If true, filter to same session; if false, return time-window-based neighbors
+   * @returns Array of neighbor memories in chronological order, excluding deleted_at entries
+   */
+  getNeighbors(focus: any, window: number = 3, sameSessionOnly: boolean = true): any[] {
+    if (!focus || !focus.id || !focus.project_id) return [];
+
+    const focusTime = focus.created_at ?? new Date().toISOString();
+    const limit = window * 2 + 1;
+
+    // Issue #3: When sameSessionOnly=true and claude_session_id is available on the focus memory,
+    // use exact session match. Fall back to ±2h time window when claude_session_id is null.
+    if (sameSessionOnly && focus.claude_session_id) {
+      const rows = this.db.prepare(`
+        SELECT * FROM memories
+        WHERE project_id = ? AND deleted_at IS NULL
+          AND id != ?
+          AND claude_session_id = ?
+        ORDER BY created_at ASC
+        LIMIT ?
+      `).all(
+        focus.project_id,
+        focus.id,
+        focus.claude_session_id,
+        limit
+      ) as any[];
+      return rows;
+    }
+
+    // Time-window fallback: ±2h from focus (used when sameSessionOnly=false or claude_session_id is null).
+    // Use strftime('%s', ...) for epoch-based comparison to avoid T-vs-space format mismatch
+    // between stored ISO 8601 timestamps (YYYY-MM-DDTHH:MM:SSZ) and SQLite's datetime() output.
+    const rows = this.db.prepare(`
+      SELECT * FROM memories
+      WHERE project_id = ? AND deleted_at IS NULL
+        AND id != ?
+        AND strftime('%s', created_at) >= strftime('%s', datetime(?, '-2 hours'))
+        AND strftime('%s', created_at) <= strftime('%s', datetime(?, '+2 hours'))
+      ORDER BY created_at ASC
+      LIMIT ?
+    `).all(
+      focus.project_id,
+      focus.id,
+      focusTime,
+      focusTime,
+      limit
+    ) as any[];
+
+    return rows;
+  }
+
+  /**
+   * Issue #3: List all memories for a given Claude session ID.
+   * Optionally filter by source (e.g. 'auto-capture').
+   */
+  listBySession(claudeSessionId: string, opts?: { sourceFilter?: string }): any[] {
+    const params: any[] = [claudeSessionId];
+    let sourceClause = "";
+    if (opts?.sourceFilter) {
+      sourceClause = "AND source = ?";
+      params.push(opts.sourceFilter);
+    }
+    return this.db.prepare(`
+      SELECT * FROM memories
+      WHERE claude_session_id = ? AND deleted_at IS NULL
+        ${sourceClause}
+      ORDER BY created_at ASC
+    `).all(...params) as any[];
   }
 }

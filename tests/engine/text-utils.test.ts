@@ -119,6 +119,185 @@ describe("scrubSecrets (G2)", () => {
     const result = scrubSecrets(input);
     expect(result).toBe(input);
   });
+
+  // Issue #12 — Pattern 4: database / cache / mail env-var prefixes
+  it("pattern 4 positive: scrubs DB_PASSWORD assignment", () => {
+    const input = "DB_PASSWORD=correct-horse-battery-staple";
+    const result = scrubSecrets(input);
+    expect(result).toContain("[REDACTED]");
+    expect(result).not.toContain("correct-horse-battery-staple");
+  });
+
+  it("pattern 4 positive: scrubs DATABASE_URL assignment", () => {
+    const input = "DATABASE_URL=postgres://u:p@host/db";
+    const result = scrubSecrets(input);
+    expect(result).toContain("[REDACTED]");
+    expect(result).not.toContain("postgres://u:p@host/db");
+  });
+
+  it("pattern 4 positive: scrubs REDIS_PASSWORD assignment", () => {
+    const input = "REDIS_PASSWORD=super_secret_redis";
+    const result = scrubSecrets(input);
+    expect(result).toContain("[REDACTED]");
+    expect(result).not.toContain("super_secret_redis");
+  });
+
+  it("pattern 4 positive: scrubs SMTP_PASSWORD assignment", () => {
+    const input = "SMTP_PASSWORD=mailpass123";
+    const result = scrubSecrets(input);
+    expect(result).toContain("[REDACTED]");
+    expect(result).not.toContain("mailpass123");
+  });
+
+  it("pattern 4 positive: scrubs MONGO_URI assignment", () => {
+    const input = "MONGO_URI=mongodb://user:pass@localhost/db";
+    const result = scrubSecrets(input);
+    expect(result).toContain("[REDACTED]");
+    expect(result).not.toContain("mongodb://user:pass@localhost/db");
+  });
+
+  it("pattern 4 negative: does not scrub normal DB variable name without assignment", () => {
+    // Plain word without assignment should not trigger pattern 4
+    const input = "The DB_NAME is my_database";
+    const result = scrubSecrets(input);
+    // Should not redact DB_NAME since it's followed by ' is' not '='
+    expect(result).toBe(input);
+  });
+
+  // Issue #12 — Pattern 5: [A-Z_]+_URL env-var
+  it("pattern 5 positive: scrubs REDIS_URL with embedded creds", () => {
+    const input = "REDIS_URL=redis://localhost:6379";
+    const result = scrubSecrets(input);
+    expect(result).toContain("[REDACTED]");
+    expect(result).not.toContain("redis://localhost:6379");
+  });
+
+  it("pattern 5 negative: plain URL text without env-var prefix is not scrubbed by p5", () => {
+    // A URL not preceded by ENV_VAR= should not be scrubbed by pattern 5 alone
+    const input = "Visit https://example.com for docs";
+    const result = scrubSecrets(input);
+    // Pattern 5 requires VAR_URL= format — plain URL without embedded creds passes through
+    expect(result).toBe(input);
+  });
+
+  // Issue #12 — Pattern 6: URL with embedded credentials
+  it("pattern 6 positive: redacts user:pass in URL, keeps host visible", () => {
+    const input = "https://user:secret@example.com/path";
+    const result = scrubSecrets(input);
+    expect(result).toContain("://[REDACTED]@example.com/path");
+    expect(result).not.toContain("user:secret");
+  });
+
+  it("pattern 6 positive: redacts postgres URL creds", () => {
+    const input = "postgres://admin:hunter2@db.internal:5432/mydb";
+    const result = scrubSecrets(input);
+    expect(result).toContain("://[REDACTED]@db.internal:5432/mydb");
+    expect(result).not.toContain("hunter2");
+  });
+
+  it("pattern 6 negative: URL without credentials is not modified", () => {
+    const input = "https://example.com/api/v1/data";
+    const result = scrubSecrets(input);
+    expect(result).toBe(input);
+  });
+
+  // Issue #12 — Pattern 7: Bearer / Authorization tokens
+  it("pattern 7 positive: scrubs Bearer token (16+ chars)", () => {
+    const input = "Bearer abcdef1234567890ABCDEF1234567890";
+    const result = scrubSecrets(input);
+    expect(result).toContain("Bearer [REDACTED]");
+    expect(result).not.toContain("abcdef1234567890ABCDEF1234567890");
+  });
+
+  it("pattern 7 positive: case-insensitive bearer prefix", () => {
+    const input = "bearer abcdef1234567890ABCDEF1234567890";
+    const result = scrubSecrets(input);
+    expect(result).toContain("Bearer [REDACTED]");
+    expect(result).not.toContain("abcdef1234567890ABCDEF1234567890");
+  });
+
+  it("pattern 7 positive: scrubs Authorization header", () => {
+    const input = "Authorization: Bearer abcdef1234567890ABCDEF1234567890";
+    const result = scrubSecrets(input);
+    expect(result).toContain("Authorization: [REDACTED]");
+    expect(result).not.toContain("abcdef1234567890ABCDEF1234567890");
+  });
+
+  it("pattern 7 negative: short bearer value (<16 chars) is not scrubbed", () => {
+    const input = "bearer short123";
+    const result = scrubSecrets(input);
+    expect(result).toBe(input);
+  });
+
+  // Issue #12 — Pattern 8: GitHub PATs
+  it("pattern 8 positive: scrubs classic GitHub PAT (ghp_)", () => {
+    const input = "ghp_abcdefghijklmnopqrstuvwxyz0123456789AB";
+    const result = scrubSecrets(input);
+    expect(result).toContain("[REDACTED]");
+    expect(result).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789AB");
+  });
+
+  it("pattern 8 positive: scrubs GitHub oauth token (gho_)", () => {
+    const input = "TOKEN=gho_abcdefghijklmnopqrstuvwxyz0123456789AB";
+    // Pattern 1 would catch token= first, but in isolation:
+    const input2 = "header: gho_abcdefghijklmnopqrstuvwxyz0123456789AB";
+    const result = scrubSecrets(input2);
+    expect(result).toContain("[REDACTED]");
+    expect(result).not.toContain("gho_abcdefghijklmnopqrstuvwxyz0123456789AB");
+  });
+
+  it("pattern 8 positive: scrubs GitHub server token (ghs_)", () => {
+    const input = "ghs_abcdefghijklmnopqrstuvwxyz0123456789AB";
+    const result = scrubSecrets(input);
+    expect(result).toContain("[REDACTED]");
+  });
+
+  it("pattern 8 negative: short gh_ token (<36 chars after prefix) is not matched", () => {
+    const input = "ghp_shorttoken12345";
+    const result = scrubSecrets(input);
+    // Less than 36 chars after prefix — should NOT be scrubbed by p8
+    expect(result).toBe(input);
+  });
+
+  // Issue #12 — Pattern 9: JWT shape
+  it("pattern 9 positive: scrubs JWT token (eyJ prefix)", () => {
+    const input = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.signaturepart12345";
+    const result = scrubSecrets(input);
+    expect(result).toContain("[REDACTED]");
+    expect(result).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+  });
+
+  it("pattern 9 positive: scrubs realistic JWT in Authorization context", () => {
+    const input = "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIiwiaWF0IjoxNjE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    const result = scrubSecrets(input);
+    expect(result).toContain("[REDACTED]");
+    expect(result).not.toContain("eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9");
+  });
+
+  it("pattern 9 negative: short eyJ-prefixed string with short segments is not scrubbed", () => {
+    // Each segment must be 10+ chars — short segments should not match
+    const input = "eyJshort.eyJx.sig";
+    const result = scrubSecrets(input);
+    // Segments are too short (<10 chars each) — should not match p9
+    expect(result).toBe(input);
+  });
+
+  // Edge cases
+  it("scrubSecrets('') returns ''", () => {
+    expect(scrubSecrets("")).toBe("");
+  });
+
+  it("scrubSecrets(null as any) returns null", () => {
+    expect(scrubSecrets(null as any)).toBe(null);
+  });
+
+  it("pattern 4 and 5 don't double-redact DATABASE_URL", () => {
+    // DATABASE_URL matches pattern 4 first — pattern 5 shouldn't cause a second pass issue
+    const input = "DATABASE_URL=postgres://u:p@host/db";
+    const result = scrubSecrets(input);
+    // Should produce exactly one [REDACTED], not double-nested
+    expect(result).toBe("[REDACTED]");
+  });
 });
 
 describe("stringifyToolResponse (K2)", () => {

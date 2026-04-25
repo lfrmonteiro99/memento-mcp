@@ -6,11 +6,13 @@ import { MemoriesRepo } from "./db/memories.js";
 import { DecisionsRepo } from "./db/decisions.js";
 import { PitfallsRepo } from "./db/pitfalls.js";
 import { SessionsRepo } from "./db/sessions.js";
+import { EmbeddingsRepo } from "./db/embeddings.js";
 import { loadConfig, getDefaultConfigPath, getDefaultDbPath } from "./lib/config.js";
 import { createLogger, logLevelFromEnv } from "./lib/logger.js";
 import { handleMemoryStore } from "./tools/memory-store.js";
 import { handleMemorySearch } from "./tools/memory-search.js";
 import { handleMemoryGet } from "./tools/memory-get.js";
+import { handleMemoryTimeline } from "./tools/memory-timeline.js";
 import { handleMemoryList } from "./tools/memory-list.js";
 import { handleMemoryDelete } from "./tools/memory-delete.js";
 import { handleDecisionsLog } from "./tools/decisions-log.js";
@@ -26,6 +28,8 @@ import { runCompressionCycle } from "./engine/compressor.js";
 import { toCompressionConfig } from "./lib/compression-config.js";
 import { configureFileMemoryCache } from "./lib/file-memory.js";
 import { promoteImportanceFromUtility } from "./engine/importance-promoter.js";
+import { collectPoliciesPerProject } from "./lib/policy.js";
+import { logDedupOnFirstUse } from "./engine/embeddings/dedup.js";
 
 const log = createLogger(logLevelFromEnv());
 const config = loadConfig(getDefaultConfigPath());
@@ -34,11 +38,15 @@ const memRepo = new MemoriesRepo(db);
 const decRepo = new DecisionsRepo(db);
 const pitRepo = new PitfallsRepo(db);
 const sessRepo = new SessionsRepo(db);
+const embRepo = new EmbeddingsRepo(db);
 const analyticsTracker = new AnalyticsTracker(db, { flushThreshold: config.analytics.flushThreshold });
 const disposeFlush = installFlushOnExit(analyticsTracker);
 
 // File-memory cache TTL from config (0 disables caching).
 configureFileMemoryCache(config.fileMemory.enabled ? config.fileMemory.cacheTtlSeconds : 0);
+
+// Issue #8: one-time startup log when both embeddings.enabled and dedup are true.
+logDedupOnFirstUse(config.search.embeddings);
 
 const MIN_VACUUM_INTERVAL_MS = 24 * 60 * 60 * 1000;
 let lastVacuumAt = 0;
@@ -49,6 +57,22 @@ function runMaintenance(): void {
     if (n > 0) log.info(`Pruned ${n} stale memories`);
   } catch (e) {
     log.warn(`Pruning error: ${e}`);
+  }
+
+  // Issue #9: apply per-project retention overrides (policy can only tighten global limits)
+  try {
+    const perProjectPolicies = collectPoliciesPerProject(db);
+    for (const { projectId, policy } of perProjectPolicies) {
+      const { maxAgeDays, minImportance } = policy.retention;
+      if (maxAgeDays !== undefined || minImportance !== undefined) {
+        const effectiveMaxAge = Math.min(maxAgeDays ?? config.pruning.maxAgeDays, config.pruning.maxAgeDays);
+        const effectiveMinImp = Math.max(minImportance ?? config.pruning.minImportance, config.pruning.minImportance);
+        const n2 = memRepo.pruneStaleByProject(projectId, effectiveMaxAge, effectiveMinImp);
+        if (n2 > 0) log.info(`Pruned ${n2} stale memories for project ${projectId} (policy override)`);
+      }
+    }
+  } catch (e) {
+    log.warn(`Per-project pruning error: ${e}`);
   }
 
   if (config.analytics.enabled && config.analytics.retentionDays > 0) {
@@ -156,36 +180,64 @@ server.tool(
     vault_kind: z.string().default(""),
     vault_folder: z.string().default(""),
     vault_note_title: z.string().default(""),
+    dedup: z.enum(["strict", "warn", "off"]).optional(),
   },
   async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryStore(memRepo, params, db, config) }],
+    content: [{ type: "text" as const, text: await handleMemoryStore(memRepo, params, db, config, embRepo) }],
   })
 );
 
 server.tool(
   "memory_search",
-  "Search memories by query. Returns ranked results.",
+  [
+    "Search memories with progressive disclosure.",
+    "Layer 1 (cheapest): detail='index' — titles + scores, ~30t per result. Start here.",
+    "Layer 2: detail='summary' — preview body, ~80t per result. Use to shortlist.",
+    "Layer 3: detail='full' — full body, ~150-300t per result. Use sparingly.",
+    "For chronological context around one hit, prefer memory_timeline(id) — ~200t per neighbor.",
+    "For one full body, prefer memory_get(id) — ~300-800t."
+  ].join(" "),
   {
     query: z.string(),
     project_path: z.string().default(""),
     memory_type: z.string().default(""),
     limit: z.number().default(10),
-    detail: z.enum(["index", "summary", "full"]).default("full"),
+    detail: z.enum(["index", "summary", "full"]).default("index"),
     include_file_memories: z.boolean().default(true),
   },
   async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemorySearch(memRepo, config, params, db) }],
+    content: [{ type: "text" as const, text: await handleMemorySearch(memRepo, config, params, db, analyticsTracker) }],
   })
 );
 
 server.tool(
   "memory_get",
-  "Get full content of a memory by ID.",
+  "Fetch the full body of a single memory by id (~300-800 tokens). Prefer memory_search first to find the right id. Set reveal_private=true to see content inside <private> tags (emits an audit event).",
   {
     memory_id: z.string(),
+    reveal_private: z.boolean().default(false),
   },
   async (params) => ({
     content: [{ type: "text" as const, text: await handleMemoryGet(memRepo, db, config, params) }],
+  })
+);
+
+server.tool(
+  "memory_timeline",
+  [
+    "Return memories created around a given memory id (chronological neighborhood).",
+    "Cost: ~200 tokens per neighbor.",
+    "Use after memory_search(detail='index') when you need work-session context for one specific hit.",
+    "Cheaper than calling memory_get on each neighbor individually."
+  ].join(" "),
+  {
+    id: z.string(),
+    window: z.number().int().min(1).max(10).default(3),
+    detail: z.enum(["index", "summary"]).default("summary"),
+    same_session_only: z.boolean().default(true),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryTimeline(memRepo, params) }],
   })
 );
 
@@ -280,9 +332,10 @@ server.tool(
     importance: z.number().optional(),
     memory_type: z.string().optional(),
     pinned: z.boolean().optional(),
+    dedup: z.enum(["strict", "warn", "off"]).optional(),
   },
   async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryUpdate(memRepo, params) }],
+    content: [{ type: "text" as const, text: await handleMemoryUpdate(memRepo, params, config, embRepo) }],
   })
 );
 

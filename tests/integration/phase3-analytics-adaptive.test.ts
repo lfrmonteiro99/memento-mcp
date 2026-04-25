@@ -127,6 +127,7 @@ describe("Phase 3 integration: utility signals affect adaptive score", () => {
 
     const adaptiveScore = computeAdaptiveScore({
       fts_relevance: 0.8,
+      embedding_relevance: 0,
       importance: 0.5,
       decay: computeExponentialDecay(0),
       utility: utilityScore,
@@ -188,7 +189,7 @@ describe("Phase 3 integration: end-to-end adaptive ranking (search-context hook)
     rmSync(dbPath, { force: true });
   });
 
-  it("high-utility memory ranks above low-utility memory (Phase 1 + Phase 3 together)", () => {
+  it("high-utility memory ranks above low-utility memory (Phase 1 + Phase 3 together)", async () => {
     const highId = memRepo.store({
       title: "Authentication patterns: JWT tokens",
       body: "Use JWT for stateless auth. Verify signature on each request.",
@@ -216,7 +217,7 @@ describe("Phase 3 integration: end-to-end adaptive ranking (search-context hook)
     }
     tracker.flush();
 
-    const output = processSearchHook(
+    const output = await processSearchHook(
       db, "how does authentication work with JWT?",
       memRepo, sessRepo, DEFAULT_CONFIG,
     );
@@ -227,7 +228,7 @@ describe("Phase 3 integration: end-to-end adaptive ranking (search-context hook)
     expect(output.indexOf("JWT tokens")).toBeLessThan(output.indexOf("Authentication overview"));
   });
 
-  it("injection events are emitted by the search-context hook (injection event in analytics_events)", () => {
+  it("injection events are emitted by the search-context hook (injection event in analytics_events)", async () => {
     // We can't verify injection events are written by the hook itself (the hook uses
     // the AnalyticsTracker injected from outside), but we verify the hook writes
     // batchUpdateAccess correctly and the tracker contract holds.
@@ -248,14 +249,14 @@ describe("Phase 3 integration: end-to-end adaptive ranking (search-context hook)
     const utilityBefore = computeUtilityScore(db, id);
     expect(utilityBefore).toBeGreaterThan(0.5); // has real signal now
 
-    const out = processSearchHook(
+    const out = await processSearchHook(
       db, "pipeline query processing function",
       memRepo, sessRepo, DEFAULT_CONFIG,
     );
     expect(out).toContain("pipeline query processing");
   });
 
-  it("ordering changes when utility distribution changes (different outputs)", () => {
+  it("ordering changes when utility distribution changes (different outputs)", async () => {
     // Identical bodies → FTS relevance equal → utility alone drives rank.
     const a = memRepo.store({
       title: "Query result A",
@@ -269,7 +270,7 @@ describe("Phase 3 integration: end-to-end adaptive ranking (search-context hook)
     });
 
     // Scenario 1: no utility data yet
-    const out1 = processSearchHook(
+    const out1 = await processSearchHook(
       db, "how does pipeline query processing work?",
       memRepo, sessRepo, DEFAULT_CONFIG,
     );
@@ -287,7 +288,7 @@ describe("Phase 3 integration: end-to-end adaptive ranking (search-context hook)
     }
     tracker.flush();
 
-    const out2 = processSearchHook(
+    const out2 = await processSearchHook(
       db, "how does pipeline query processing work?",
       memRepo, sessRepo, DEFAULT_CONFIG,
     );

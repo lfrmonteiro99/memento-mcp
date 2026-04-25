@@ -73,6 +73,12 @@ export async function handleMemoryAnalytics(
     if (Object.keys(report.memory_stats.by_type).length > 0) {
       lines.push("By type: " + Object.entries(report.memory_stats.by_type).map(([t, c]) => `${t}:${c}`).join(", "));
     }
+    if (report.dedup_stats) {
+      const d = report.dedup_stats;
+      lines.push(
+        `Dedup: ${d.blocked} blocked, ${d.warned} warned, ${d.passed} passed (${report.period})`
+      );
+    }
   }
 
   // G3: explanatory footer when the period predates the v2 install (i.e., no analytics events yet).

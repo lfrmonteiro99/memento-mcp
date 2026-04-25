@@ -59,6 +59,24 @@ export function getPruneRecommendations(db: Database.Database): PruneRecommendat
   return recommendations;
 }
 
+export interface SessionSummaryStats {
+  llm: number;
+  deterministic: number;
+  fallback: number;
+}
+
+export interface SyncStats {
+  pushes: number;
+  pulls: number;
+  conflicts: number;
+}
+
+export interface DedupStats {
+  blocked: number;
+  warned: number;
+  passed: number;
+}
+
 export interface AnalyticsReport {
   period: string;
   session_count: number;
@@ -81,6 +99,13 @@ export interface AnalyticsReport {
     avg_ratio: number;
     tokens_saved: number;
   };
+  search_layer_stats?: {
+    total_searches: number;
+    by_detail: Record<string, number>;
+  };
+  session_summary_stats?: SessionSummaryStats;
+  sync_stats?: SyncStats;
+  dedup_stats?: DedupStats;
 }
 
 export function periodToSqlClause(period: string): string {
@@ -169,6 +194,92 @@ export function generateReport(db: Database.Database, projectId: string | null, 
     avg_ratio: number;
   };
 
+  // Search layer stats
+  const searchLayerRows = db.prepare(`
+    SELECT
+      json_extract(event_data, '$.detail') as detail,
+      COUNT(*) as count
+    FROM analytics_events
+    WHERE ${projSql} AND event_type = 'search_layer_used' ${clause}
+    GROUP BY detail
+  `).all(...projBind) as Array<{ detail: string; count: number }>;
+
+  const searchLayerByDetail: Record<string, number> = {};
+  let totalSearches = 0;
+  for (const r of searchLayerRows) {
+    if (r.detail) {
+      searchLayerByDetail[r.detail] = r.count;
+      totalSearches += r.count;
+    }
+  }
+
+  // Session summary mode stats
+  const summaryRows = db.prepare(`
+    SELECT
+      json_extract(event_data, '$.mode') as mode,
+      json_extract(event_data, '$.fallback') as fallback,
+      COUNT(*) as cnt
+    FROM analytics_events
+    WHERE ${projSql} AND event_type = 'session_summary' ${clause}
+    GROUP BY json_extract(event_data, '$.mode'), json_extract(event_data, '$.fallback')
+  `).all(...projBind) as Array<{ mode: string | null; fallback: number | string | null; cnt: number }>;
+
+  let llmSummaries = 0;
+  let deterministicSummaries = 0;
+  let fallbackSummaries = 0;
+  for (const r of summaryRows) {
+    if (r.mode === "llm") {
+      llmSummaries += r.cnt;
+    } else {
+      deterministicSummaries += r.cnt;
+    }
+    if (r.fallback === 1 || r.fallback === "true" || r.fallback === true) {
+      fallbackSummaries += r.cnt;
+    }
+  }
+  const totalSummaries = llmSummaries + deterministicSummaries;
+
+  // Sync stats
+  const syncPushRows = db.prepare(`
+    SELECT COUNT(*) as cnt FROM analytics_events
+    WHERE ${projSql} AND event_type = 'sync_push' ${clause}
+  `).get(...projBind) as { cnt: number };
+
+  const syncPullRows = db.prepare(`
+    SELECT COUNT(*) as cnt FROM analytics_events
+    WHERE ${projSql} AND event_type = 'sync_pull' ${clause}
+  `).get(...projBind) as { cnt: number };
+
+  const syncConflictRows = db.prepare(`
+    SELECT COALESCE(SUM(json_extract(event_data, '$.conflicts')), 0) as total
+    FROM analytics_events
+    WHERE ${projSql} AND event_type = 'sync_pull' ${clause}
+  `).get(...projBind) as { total: number };
+
+  const totalSyncPushes = syncPushRows.cnt;
+  const totalSyncPulls = syncPullRows.cnt;
+  const totalSyncConflicts = syncConflictRows.total ?? 0;
+
+  // Dedup stats (last 7d window; last period applies)
+  const dedupRows = db.prepare(`
+    SELECT
+      json_extract(event_data, '$.action') as action,
+      COUNT(*) as cnt
+    FROM analytics_events
+    WHERE ${projSql} AND event_type = 'dedup_decision' ${clause}
+    GROUP BY json_extract(event_data, '$.action')
+  `).all(...projBind) as Array<{ action: string | null; cnt: number }>;
+
+  let dedupBlocked = 0;
+  let dedupWarned = 0;
+  let dedupPassed = 0;
+  for (const r of dedupRows) {
+    if (r.action === "blocked") dedupBlocked += r.cnt;
+    else if (r.action === "warned") dedupWarned += r.cnt;
+    else if (r.action === "passed") dedupPassed += r.cnt;
+  }
+  const totalDedupEvents = dedupBlocked + dedupWarned + dedupPassed;
+
   return {
     period,
     session_count: sessionStats.session_count,
@@ -192,5 +303,24 @@ export function generateReport(db: Database.Database, projectId: string | null, 
       avg_ratio: compressionStats.avg_ratio,
       tokens_saved: Math.max(0, compressionStats.tokens_before - compressionStats.tokens_after),
     },
+    search_layer_stats: totalSearches > 0 ? {
+      total_searches: totalSearches,
+      by_detail: searchLayerByDetail,
+    } : undefined,
+    session_summary_stats: totalSummaries > 0 ? {
+      llm: llmSummaries,
+      deterministic: deterministicSummaries,
+      fallback: fallbackSummaries,
+    } : undefined,
+    sync_stats: (totalSyncPushes > 0 || totalSyncPulls > 0) ? {
+      pushes: totalSyncPushes,
+      pulls: totalSyncPulls,
+      conflicts: totalSyncConflicts,
+    } : undefined,
+    dedup_stats: totalDedupEvents > 0 ? {
+      blocked: dedupBlocked,
+      warned: dedupWarned,
+      passed: dedupPassed,
+    } : undefined,
   };
 }

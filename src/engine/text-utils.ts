@@ -82,6 +82,46 @@ export function scrubSecrets(text: string): string {
   result = result.replace(/-----BEGIN\s+OPENSSH\s+PRIVATE\s+KEY-----[\s\S]*?-----END\s+OPENSSH\s+PRIVATE\s+KEY-----/gi, "[REDACTED PRIVATE KEY]");
   result = result.replace(/-----BEGIN\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----[\s\S]*?-----END\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----/gi, "[REDACTED PRIVATE KEY]");
 
+  // Pattern 4: common database / cache / mail env-var prefixes
+  // Applied BEFORE the generic [A-Z_]+_URL pattern to avoid double-redaction.
+  result = result.replace(
+    /\b(?:DB_|DATABASE_|POSTGRES_|MYSQL_|MONGO_|REDIS_|SMTP_|MAIL_|RABBITMQ_|KAFKA_)[A-Z_]*\s*=\s*[^\s\n]+/g,
+    "[REDACTED]"
+  );
+
+  // Pattern 5: standalone [A-Z_]+_URL env-var with embedded creds or value
+  result = result.replace(
+    /\b[A-Z_]+_URL\s*=\s*[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s\n]+/g,
+    "[REDACTED]"
+  );
+
+  // Pattern 6: URL with embedded credentials (https://user:pass@host) — redact only the creds portion
+  result = result.replace(
+    /\b[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s/:]+:[^\s/@]+@[^\s\n]+/g,
+    (match) => match.replace(/:\/\/[^\s/:]+:[^\s/@]+@/, "://[REDACTED]@")
+  );
+
+  // Pattern 7: Authorization header (full form) — must run BEFORE standalone Bearer
+  // so that "Authorization: Bearer <token>" is caught as one unit.
+  result = result.replace(
+    /\bAuthorization:\s*[A-Za-z]+\s+[A-Za-z0-9._\-+/=]{16,}/g,
+    "Authorization: [REDACTED]"
+  );
+  // Pattern 7b: standalone Bearer token (not already redacted by the Authorization line)
+  result = result.replace(
+    /\b[Bb]earer\s+[A-Za-z0-9._\-+/=]{16,}/g,
+    "Bearer [REDACTED]"
+  );
+
+  // Pattern 8: GitHub PATs — classic (ghp_) fine-grained (github_pat_) oauth (gho_) server (ghs_) refresh (ghr_)
+  result = result.replace(/\bgh[pousr]_[A-Za-z0-9]{36,}/g, "[REDACTED]");
+
+  // Pattern 9: JWT shape — eyJ prefix + three base64url segments separated by dots
+  result = result.replace(
+    /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+    "[REDACTED]"
+  );
+
   return result;
 }
 

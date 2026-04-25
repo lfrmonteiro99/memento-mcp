@@ -9,6 +9,7 @@ import { estimateTokens } from "../../src/lib/budget.js";
 import { computeExponentialDecay } from "../../src/lib/decay.js";
 import { extractKeywordsV2, buildFtsQueryV2 } from "../../src/engine/keyword-extractor.js";
 import { DEFAULT_CONFIG } from "../../src/lib/config.js";
+import { ENGLISH_PROFILE } from "../../src/lib/profiles.js";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -40,9 +41,9 @@ describe("Phase 1 integration: token savings validation", () => {
   });
   afterEach(() => { db.close(); rmSync(dbPath, { force: true }); });
 
-  it("v2 database has schema version 2", () => {
+  it("database has schema version 7 (v7 migration has landed)", () => {
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(3);
+    expect(version).toBe(7);
   });
 
   it("memories table has source and adaptive_score columns", () => {
@@ -75,7 +76,9 @@ describe("Phase 1 integration: token savings validation", () => {
   });
 
   it("keyword extractor produces up to 8 keywords with phrases", () => {
-    const kws = extractKeywordsV2("how does the authentication flow work with OAuth2 tokens in the service layer?");
+    const kws = extractKeywordsV2("how does the authentication flow work with OAuth2 tokens in the service layer?", {
+      stopWords: ENGLISH_PROFILE.stopWords,
+    });
     expect(kws.length).toBeLessThanOrEqual(8);
     expect(kws.length).toBeGreaterThan(0);
     // Should have filtered stop words

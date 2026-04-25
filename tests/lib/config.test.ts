@@ -191,3 +191,87 @@ describe("v2 config fields", () => {
     expect(config.compression.enabled).toBe(true);
   });
 });
+
+describe("embeddings config", () => {
+  const tmpDir = join(tmpdir(), `memento-config-emb-${process.pid}-${randomUUID()}`);
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("DEFAULT_CONFIG has embeddings disabled by default", () => {
+    expect(DEFAULT_CONFIG.search.embeddings.enabled).toBe(false);
+    expect(DEFAULT_CONFIG.search.embeddings.provider).toBe("openai");
+    expect(DEFAULT_CONFIG.search.embeddings.model).toBe("text-embedding-3-small");
+    expect(DEFAULT_CONFIG.search.embeddings.dim).toBe(1536);
+    expect(DEFAULT_CONFIG.search.embeddings.topK).toBe(20);
+    expect(DEFAULT_CONFIG.search.embeddings.similarityThreshold).toBe(0.5);
+    expect(DEFAULT_CONFIG.search.embeddings.batchSize).toBe(32);
+    expect(DEFAULT_CONFIG.search.embeddings.requestTimeoutMs).toBe(10000);
+  });
+
+  it("loads [search.embeddings] TOML section", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    const cfgPath = join(tmpDir, "config.toml");
+    writeFileSync(
+      cfgPath,
+      '[search.embeddings]\nenabled = true\nmodel = "text-embedding-ada-002"\ntop_k = 10\nsimilarity_threshold = 0.7\n',
+    );
+    const config = loadConfig(cfgPath);
+    expect(config.search.embeddings.enabled).toBe(true);
+    expect(config.search.embeddings.model).toBe("text-embedding-ada-002");
+    expect(config.search.embeddings.topK).toBe(10);
+    expect(config.search.embeddings.similarityThreshold).toBe(0.7);
+    // Other defaults preserved
+    expect(config.search.embeddings.batchSize).toBe(32);
+  });
+
+  it("preserves all other search defaults when only embeddings is set", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    const cfgPath = join(tmpDir, "config.toml");
+    writeFileSync(cfgPath, '[search.embeddings]\nenabled = false\n');
+    const config = loadConfig(cfgPath);
+    expect(config.search.maxResults).toBe(10); // default
+    expect(config.search.ftsPrefixMatching).toBe(true); // default
+  });
+
+  it("DEFAULT_CONFIG has dedup=false by default (issue #8)", () => {
+    expect(DEFAULT_CONFIG.search.embeddings.dedup).toBe(false);
+    expect(DEFAULT_CONFIG.search.embeddings.dedupThreshold).toBe(0.92);
+    expect(DEFAULT_CONFIG.search.embeddings.dedupDefaultMode).toBe("warn");
+    expect(DEFAULT_CONFIG.search.embeddings.dedupCheckOnUpdate).toBe(true);
+    expect(DEFAULT_CONFIG.search.embeddings.dedupMaxScan).toBe(2000);
+  });
+
+  it("TOML round-trip: dedup, dedup_threshold, dedup_default_mode, dedup_check_on_update, dedup_max_scan", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    const cfgPath = join(tmpDir, "config.toml");
+    writeFileSync(
+      cfgPath,
+      [
+        "[search.embeddings]",
+        "enabled = true",
+        "dedup = true",
+        "dedup_threshold = 0.85",
+        'dedup_default_mode = "strict"',
+        "dedup_check_on_update = false",
+        "dedup_max_scan = 500",
+      ].join("\n"),
+    );
+    const config = loadConfig(cfgPath);
+    expect(config.search.embeddings.dedup).toBe(true);
+    expect(config.search.embeddings.dedupThreshold).toBe(0.85);
+    expect(config.search.embeddings.dedupDefaultMode).toBe("strict");
+    expect(config.search.embeddings.dedupCheckOnUpdate).toBe(false);
+    expect(config.search.embeddings.dedupMaxScan).toBe(500);
+  });
+
+  it("embeddings.enabled=true alone does NOT enable dedup (must be explicit)", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    const cfgPath = join(tmpDir, "config.toml");
+    writeFileSync(cfgPath, "[search.embeddings]\nenabled = true\n");
+    const config = loadConfig(cfgPath);
+    expect(config.search.embeddings.enabled).toBe(true);
+    expect(config.search.embeddings.dedup).toBe(false); // separate opt-in
+  });
+});

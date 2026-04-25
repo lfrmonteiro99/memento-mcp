@@ -1,45 +1,24 @@
 // src/engine/keyword-extractor.ts
 
-const STOP_WORDS = new Set([
-  "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-  "have", "has", "had", "do", "does", "did", "will", "would", "could",
-  "should", "may", "might", "shall", "can", "need", "dare", "ought",
-  "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
-  "as", "into", "through", "during", "before", "after", "above", "below",
-  "between", "out", "off", "over", "under", "again", "further", "then",
-  "once", "here", "there", "when", "where", "why", "how", "all", "both",
-  "each", "few", "more", "most", "other", "some", "such", "no", "nor",
-  "not", "only", "own", "same", "so", "than", "too", "very", "just",
-  "because", "but", "and", "or", "if", "while", "about", "this", "that",
-  "these", "those", "what", "which", "who", "whom", "it", "its", "my",
-  "your", "his", "her", "our", "their", "me", "him", "us", "them",
-  "i", "you", "he", "she", "we", "they",
-  // Dev-specific
-  "function", "const", "let", "var", "return", "import", "export",
-  "class", "new", "public", "private", "protected", "static", "void",
-  // Portuguese common
-  "o", "a", "os", "as", "um", "de", "do", "da", "em", "no", "na",
-  "por", "para", "com", "que", "e", "se", "nao", "mais",
-]);
-
-export interface ExtractorOptions {
+export interface ExtractOptions {
   maxTokens?: number;
   preservePhrases?: boolean;
   minWordLength?: number;
+  stopWords: ReadonlySet<string>;
 }
 
 export function extractKeywordsV2(
   text: string,
-  options: ExtractorOptions = {}
+  options: ExtractOptions
 ): string[] {
-  const { maxTokens = 8, preservePhrases = true, minWordLength = 4 } = options;
+  const { maxTokens = 8, preservePhrases = true, minWordLength = 4, stopWords } = options;
 
   if (!text) return [];
 
   const normalized = text.toLowerCase().replace(/[^\w\s'-]/g, " ");
   const words = normalized
     .split(/\s+/)
-    .filter(w => w.length >= minWordLength && !STOP_WORDS.has(w));
+    .filter(w => w.length >= minWordLength && !stopWords.has(w));
 
   if (words.length === 0) return [];
 

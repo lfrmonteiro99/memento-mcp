@@ -120,6 +120,23 @@ export function extractBranchName(gitOutput: string): string {
   return match ? match[1] : "unknown";
 }
 
+/**
+ * Issue #12: Scrub secrets from a CaptureDecision's memory title and body.
+ * Titles are derived from tool names + extracts and may contain secrets
+ * (e.g. a grep pattern that contained a credential, or an infra command).
+ */
+function scrubDecision(decision: CaptureDecision): CaptureDecision {
+  if (!decision.memory) return decision;
+  return {
+    ...decision,
+    memory: {
+      ...decision.memory,
+      title: scrubSecrets(decision.memory.title),
+      body: scrubSecrets(decision.memory.body),
+    },
+  };
+}
+
 export function classify(input: ToolResultInput, config: ClassifierConfig = DEFAULT_CLASSIFIER_CONFIG): CaptureDecision {
   // G2: always scrub secrets before length/pattern checks. Double-scrubbing (the bin
   // also calls scrubSecrets before invoking classify) is idempotent — the regexes
@@ -141,7 +158,7 @@ export function classify(input: ToolResultInput, config: ClassifierConfig = DEFA
       return { action: "skip", reason: "trivial edit" };
     }
 
-    return {
+    return scrubDecision({
       action: "store", reason: "significant code edit",
       memory: {
         title: `Edit: ${extractFilename(filePath)}`,
@@ -150,7 +167,7 @@ export function classify(input: ToolResultInput, config: ClassifierConfig = DEFA
         tags: ["edit", "code-change", "auto-captured"],
         importance_score: 0.4, source: "auto-capture",
       },
-    };
+    });
   }
 
   // Global length filters (applied after Edit which uses input content, not output length)
@@ -166,7 +183,7 @@ export function classify(input: ToolResultInput, config: ClassifierConfig = DEFA
     const cmd = String(tool_input.command || "");
 
     if (/git\s+log/.test(cmd) && tool_output.length > 100) {
-      return {
+      return scrubDecision({
         action: "store", reason: "git history context",
         memory: {
           title: `Git log snapshot: current branch`,
@@ -175,11 +192,11 @@ export function classify(input: ToolResultInput, config: ClassifierConfig = DEFA
           tags: ["git", "history", "auto-captured"],
           importance_score: 0.3, source: "auto-capture",
         },
-      };
+      });
     }
 
     if (/git\s+diff/.test(cmd) && countDiffLines(tool_output) > 10) {
-      return {
+      return scrubDecision({
         action: "store", reason: "significant code changes",
         memory: {
           title: `Code changes: ${extractDiffFiles(tool_output).slice(0, 3).join(", ") || "unknown"}`,
@@ -188,13 +205,13 @@ export function classify(input: ToolResultInput, config: ClassifierConfig = DEFA
           tags: ["git", "changes", "auto-captured"],
           importance_score: 0.4, source: "auto-capture",
         },
-      };
+      });
     }
 
     if (/(?:npm|yarn|pnpm)\s+(?:test|build|lint)/.test(cmd) ||
         /(?:pytest|phpunit|vitest|jest|cargo\s+test)/.test(cmd)) {
       if (containsErrors(tool_output)) {
-        return {
+        return scrubDecision({
           action: "store", reason: "build/test failure",
           memory: {
             title: `Build/test failure: ${extractErrorSummary(tool_output)}`,
@@ -203,12 +220,12 @@ export function classify(input: ToolResultInput, config: ClassifierConfig = DEFA
             tags: ["error", "build", "auto-captured"],
             importance_score: 0.7, source: "auto-capture",
           },
-        };
+        });
       }
     }
 
     if (/docker|kubectl|terraform/.test(cmd) && tool_output.length > 200) {
-      return {
+      return scrubDecision({
         action: "store", reason: "infrastructure context",
         memory: {
           title: `Infra: ${cmd.substring(0, 80)}`,
@@ -217,7 +234,7 @@ export function classify(input: ToolResultInput, config: ClassifierConfig = DEFA
           tags: ["infrastructure", "auto-captured"],
           importance_score: 0.4, source: "auto-capture",
         },
-      };
+      });
     }
 
     return { action: "skip", reason: "no matching bash pattern" };
@@ -227,7 +244,7 @@ export function classify(input: ToolResultInput, config: ClassifierConfig = DEFA
   if (tool_name === "Read") {
     const path = String(tool_input.file_path || "");
     if (/(?:package\.json|tsconfig|\.env\.example|docker-compose|Makefile|Cargo\.toml|pyproject\.toml|composer\.json)/.test(path)) {
-      return {
+      return scrubDecision({
         action: "store", reason: "project config file",
         memory: {
           title: `Project config: ${extractFilename(path)}`,
@@ -236,7 +253,7 @@ export function classify(input: ToolResultInput, config: ClassifierConfig = DEFA
           tags: ["config", "project-structure", "auto-captured"],
           importance_score: 0.5, source: "auto-capture",
         },
-      };
+      });
     }
     return { action: "skip", reason: "source code file - too volatile" };
   }
@@ -250,7 +267,7 @@ export function classify(input: ToolResultInput, config: ClassifierConfig = DEFA
       return { action: "skip", reason: `grep result count ${matchCount} outside useful range` };
     }
 
-    return {
+    return scrubDecision({
       action: "store", reason: "codebase pattern search",
       memory: {
         title: `Pattern: "${pattern}" (${matchCount} matches)`,
@@ -259,7 +276,7 @@ export function classify(input: ToolResultInput, config: ClassifierConfig = DEFA
         tags: ["codebase", "pattern", "auto-captured"],
         importance_score: 0.3, source: "auto-capture",
       },
-    };
+    });
   }
 
   return { action: "skip", reason: "unsupported tool" };

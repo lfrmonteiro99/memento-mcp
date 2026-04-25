@@ -85,9 +85,20 @@ function registerHooks(): void {
     });
   }
 
+  // SessionEnd hook (auto-summarization)
+  settings.hooks.SessionEnd = settings.hooks.SessionEnd ?? [];
+  const summarizeHookExists = (settings.hooks.SessionEnd as any[]).some((h: any) =>
+    h.hooks?.some((hh: any) => (hh.command as string)?.includes("memento-hook-summarize"))
+  );
+  if (!summarizeHookExists) {
+    settings.hooks.SessionEnd.push({
+      hooks: [{ type: "command", command: "memento-hook-summarize", timeout: 10 }],
+    });
+  }
+
   mkdirSync(dirname(settingsPath), { recursive: true });
   atomicJsonWrite(settingsPath, settings);
-  console.log("  ✓ Hooks registered (SessionStart + UserPromptSubmit)");
+  console.log("  ✓ Hooks registered (SessionStart + UserPromptSubmit + SessionEnd)");
 }
 
 function ask(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
@@ -372,7 +383,7 @@ export async function runUninstaller(): Promise<void> {
       console.log("  ✓ MCP server entry removed");
     }
     // Remove hooks
-    for (const hookType of ["SessionStart", "UserPromptSubmit"]) {
+    for (const hookType of ["SessionStart", "UserPromptSubmit", "SessionEnd"]) {
       if (Array.isArray(settings.hooks?.[hookType])) {
         settings.hooks[hookType] = (settings.hooks[hookType] as any[]).filter(
           (h: any) => !h.hooks?.some((hh: any) => (hh.command as string)?.includes("memento-hook"))
