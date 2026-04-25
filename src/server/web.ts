@@ -10,6 +10,7 @@ import { MemoriesRepo } from "../db/memories.js";
 import { scrubSecrets } from "../engine/text-utils.js";
 import { redactPrivate } from "../engine/privacy.js";
 import { generateReport } from "../analytics/reporter.js";
+import { loadProjectPolicy } from "../lib/policy.js";
 import indexHtml from "./web-ui.html";
 
 export interface WebServerOptions {
@@ -127,7 +128,24 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, opts: 
         GROUP BY p.id
         ORDER BY p.name ASC
       `).all() as any[];
-      return json(res, 200, rows);
+      // Issue #9: augment each project with has_policy flag
+      const augmented = rows.map((r: any) => {
+        let has_policy = false;
+        let schema_version: number | null = null;
+        if (r.root_path) {
+          try {
+            const policy = loadProjectPolicy(r.root_path);
+            if (policy) {
+              has_policy = true;
+              schema_version = policy.schemaVersion;
+            }
+          } catch {
+            // ignore errors — just report no policy
+          }
+        }
+        return { ...r, has_policy, schema_version };
+      });
+      return json(res, 200, augmented);
     }
 
     // GET /api/memories

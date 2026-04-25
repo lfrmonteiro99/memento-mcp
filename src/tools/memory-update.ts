@@ -5,6 +5,7 @@ import type { Config } from "../lib/config.js";
 import { createProvider } from "../engine/embeddings/provider.js";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
 import { validateTags } from "../engine/privacy.js";
+import { loadProjectPolicy } from "../lib/policy.js";
 
 const logger = createLogger(logLevelFromEnv());
 
@@ -18,6 +19,7 @@ export async function handleMemoryUpdate(
     importance?: number;
     memory_type?: string;
     pinned?: boolean;
+    project_path?: string;
   },
   config?: Config,
   embRepo?: EmbeddingsRepo,
@@ -27,6 +29,27 @@ export async function handleMemoryUpdate(
     const tagValidation = validateTags(params.content);
     if (!tagValidation.valid) {
       return `Memory not updated: unbalanced <private> tags. Found ${tagValidation.opens} opening, ${tagValidation.closes} closing.`;
+    }
+  }
+
+  // Issue #9: enforce banned_content on update (required_tags only fire on create)
+  const projectPath = params.project_path || process.cwd();
+  const policy = loadProjectPolicy(projectPath);
+  if (policy && policy.bannedContent.length > 0) {
+    const titleToCheck = params.title ?? "";
+    const contentToCheck = params.content ?? "";
+    const tagsBlob = (params.tags ?? []).join(" ");
+    for (const re of policy.bannedContent) {
+      if (
+        (titleToCheck && re.test(titleToCheck)) ||
+        (contentToCheck && re.test(contentToCheck)) ||
+        (tagsBlob && re.test(tagsBlob))
+      ) {
+        const policyRef = policy.policyFilePath.includes(".memento/policy.toml")
+          ? ".memento/policy.toml"
+          : ".memento.toml";
+        return `Memory not updated: blocked by ${policyRef} policy (pattern: ${re.source})`;
+      }
     }
   }
 

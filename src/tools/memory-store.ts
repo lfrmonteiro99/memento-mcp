@@ -8,6 +8,7 @@ import { persistMemoryToVault } from "../engine/vault-writer.js";
 import { createProvider } from "../engine/embeddings/provider.js";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
 import { validateTags } from "../engine/privacy.js";
+import { loadProjectPolicy } from "../lib/policy.js";
 
 const logger = createLogger(logLevelFromEnv());
 
@@ -22,6 +23,45 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
   const tagValidation = validateTags(params.content ?? "");
   if (!tagValidation.valid) {
     return `Memory not stored: unbalanced <private> tags. Found ${tagValidation.opens} opening, ${tagValidation.closes} closing.`;
+  }
+
+  // Issue #9: enforce per-project policy
+  const projectPath = params.project_path || process.cwd();
+  const policy = loadProjectPolicy(projectPath);
+
+  if (policy) {
+    // 1. required_tags any_of
+    if (policy.requiredTagsAnyOf.length > 0) {
+      const has = (params.tags ?? []).some(t => policy.requiredTagsAnyOf.includes(t));
+      if (!has) {
+        return `Memory not stored: project policy requires one of: ${policy.requiredTagsAnyOf.join(", ")}`;
+      }
+    }
+    // 2. required_tags all_of (each group needs at least one match)
+    for (const group of policy.requiredTagsAllOf) {
+      const has = (params.tags ?? []).some(t => group.includes(t));
+      if (!has) {
+        return `Memory not stored: project policy requires one tag from group [${group.join(", ")}]`;
+      }
+    }
+    // 3. banned_content — check title, body, AND tags
+    const tagsBlob = (params.tags ?? []).join(" ");
+    for (const re of policy.bannedContent) {
+      if (re.test(params.content) || re.test(params.title) || re.test(tagsBlob)) {
+        const policyRef = policy.policyFilePath.includes(".memento/policy.toml")
+          ? ".memento/policy.toml"
+          : ".memento.toml";
+        return `Memory not stored: blocked by ${policyRef} policy (pattern: ${re.source})`;
+      }
+    }
+    // 4. default importance by type (only applied when importance is not provided)
+    if (params.importance === undefined && policy.defaultImportanceByType[params.memory_type ?? "fact"] !== undefined) {
+      params = { ...params, importance: policy.defaultImportanceByType[params.memory_type ?? "fact"] };
+    }
+    // 5. auto-promote to vault
+    if (policy.autoPromoteToVaultTypes.includes(params.memory_type ?? "fact")) {
+      params = { ...params, persist_to_vault: true };
+    }
   }
 
   const memoryType = params.memory_type ?? "fact";

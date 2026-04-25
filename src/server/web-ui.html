@@ -209,6 +209,7 @@
   <button data-tab="decisions">Decisions</button>
   <button data-tab="pitfalls">Pitfalls</button>
   <button data-tab="sessions">Sessions</button>
+  <button data-tab="projects">Projects</button>
   <button data-tab="analytics">Analytics</button>
 </nav>
 <main id="main"></main>
@@ -225,6 +226,7 @@ let state = {
   decisions: { offset: 0, limit: 50, total: 0 },
   pitfalls: { offset: 0, limit: 50, total: 0 },
   sessions: { offset: 0, limit: 20, total: 0 },
+  projects: { offset: 0, limit: 50, total: 0 },
   analytics: { days: 7 },
 };
 
@@ -274,6 +276,7 @@ function render() {
   if (activeTab === "decisions") return renderDecisions();
   if (activeTab === "pitfalls") return renderPitfalls();
   if (activeTab === "sessions") return renderSessions();
+  if (activeTab === "projects") return renderProjects();
   if (activeTab === "analytics") return renderAnalytics();
 }
 
@@ -474,6 +477,31 @@ async function renderSessions() {
     document.querySelectorAll("#list a[data-mid]").forEach(a => a.onclick = e => { e.preventDefault(); openMemory(a.dataset.mid); });
     renderPagination("sessions");
   } catch (e) { document.getElementById("list").innerHTML = '<div class="empty">Error: ' + escapeHtml(e.message) + '</div>'; }
+}
+
+async function renderProjects() {
+  const main = document.getElementById("main");
+  main.innerHTML = '<div id="list" class="progress">Loading…</div>';
+  try {
+    const data = await api("/api/projects");
+    if (!data || data.length === 0) {
+      document.getElementById("list").innerHTML = '<div class="empty">No projects.</div>';
+      return;
+    }
+    const rows = data.map(p => `
+      <tr>
+        <td><strong>${escapeHtml(p.name)}</strong>
+          ${p.has_policy ? '<span class="badge" title="Has .memento/policy.toml (schema v' + escapeHtml(String(p.schema_version ?? 1)) + ')">policy</span>' : ''}
+        </td>
+        <td style="color:var(--muted);font-size:12px">${escapeHtml(p.root_path || "")}</td>
+        <td>${p.memory_count}</td>
+        <td>${fmtDate(p.created_at)}</td>
+      </tr>
+    `).join("");
+    document.getElementById("list").innerHTML = `<table><thead><tr><th>Name</th><th>Path</th><th>Memories</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) {
+    document.getElementById("list").innerHTML = '<div class="empty">Error: ' + escapeHtml(e.message) + '</div>';
+  }
 }
 
 async function renderAnalytics() {

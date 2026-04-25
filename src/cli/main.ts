@@ -315,6 +315,151 @@ This file describes the vault layout for memento-mcp routing.
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
+} else if (command === "policy") {
+  // Issue #9: per-project policy management
+  const { findPolicyFile, loadProjectPolicy, compileSafeRegex, POLICY_INIT_TEMPLATE } = await import("../lib/policy.js");
+  const { parse: parseTOML } = await import("smol-toml");
+  const { readFileSync, writeFileSync, mkdirSync, existsSync } = await import("node:fs");
+  const { join: pathJoin, resolve: pathResolve } = await import("node:path");
+
+  if (!sub || sub === "show") {
+    // Show the resolved policy for cwd
+    const cwd = process.cwd();
+    const policyFile = findPolicyFile(cwd);
+    if (!policyFile) {
+      console.log(`No policy found at ${cwd}`);
+      console.log("  (looked for .memento/policy.toml and .memento.toml walking up to home dir)");
+      process.exit(0);
+    }
+    const policy = loadProjectPolicy(cwd);
+    if (!policy) {
+      console.log(`Policy file found (${policyFile}) but failed to parse — run 'memento-mcp policy validate' for details.`);
+      process.exit(1);
+    }
+    console.log(`Policy file: ${policyFile}`);
+    console.log(`Schema version: ${policy.schemaVersion}`);
+    console.log(`Root path: ${policy.rootPath}`);
+    if (policy.requiredTagsAnyOf.length > 0) {
+      console.log(`Required tags (any_of): ${policy.requiredTagsAnyOf.join(", ")}`);
+    }
+    if (policy.requiredTagsAllOf.length > 0) {
+      console.log(`Required tags (all_of groups): ${policy.requiredTagsAllOf.map(g => `[${g.join(", ")}]`).join(", ")}`);
+    }
+    if (policy.bannedContent.length > 0) {
+      console.log(`Banned content patterns (${policy.bannedContent.length}): ${policy.bannedContent.map(r => r.source).join(", ")}`);
+    }
+    if (policy.retention.maxAgeDays !== undefined) {
+      console.log(`Retention max_age_days: ${policy.retention.maxAgeDays}`);
+    }
+    if (policy.retention.minImportance !== undefined) {
+      console.log(`Retention min_importance: ${policy.retention.minImportance}`);
+    }
+    const importanceTypes = Object.entries(policy.defaultImportanceByType);
+    if (importanceTypes.length > 0) {
+      console.log(`Default importance by type: ${importanceTypes.map(([k, v]) => `${k}=${v}`).join(", ")}`);
+    }
+    if (policy.autoPromoteToVaultTypes.length > 0) {
+      console.log(`Auto-promote to vault: ${policy.autoPromoteToVaultTypes.join(", ")}`);
+    }
+    if (policy.extraStopWords.length > 0) {
+      console.log(`Extra stop words: ${policy.extraStopWords.join(", ")}`);
+    }
+
+  } else if (sub === "validate") {
+    // Validate a policy file — uses argv[4] as optional path, defaults to cwd resolution
+    const targetPath = argv[4] ? pathResolve(argv[4]) : findPolicyFile(process.cwd());
+    if (!targetPath) {
+      console.error("No policy file found. Pass a path: memento-mcp policy validate <path>");
+      process.exit(1);
+    }
+    let raw: string;
+    try {
+      raw = readFileSync(targetPath, "utf-8");
+    } catch (e) {
+      console.error(`Cannot read file: ${targetPath}`);
+      console.error(String(e));
+      process.exit(1);
+    }
+    let parsed: any;
+    try {
+      parsed = parseTOML(raw);
+    } catch (e) {
+      console.error(`TOML parse error in ${targetPath}:`);
+      console.error(String(e));
+      process.exit(1);
+    }
+    // Validate known sections
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    const sv = Number(parsed.schema_version ?? 1);
+    if (sv > 1) warnings.push(`schema_version=${sv} > 1; only v1 is supported`);
+    if (parsed.required_tags) {
+      if (parsed.required_tags.any_of !== undefined && !Array.isArray(parsed.required_tags.any_of)) {
+        errors.push("required_tags.any_of must be an array of strings");
+      }
+      if (parsed.required_tags.all_of !== undefined && !Array.isArray(parsed.required_tags.all_of)) {
+        errors.push("required_tags.all_of must be an array of arrays");
+      }
+    }
+    if (parsed.banned_content?.patterns !== undefined) {
+      if (!Array.isArray(parsed.banned_content.patterns)) {
+        errors.push("banned_content.patterns must be an array");
+      } else {
+        for (const p of parsed.banned_content.patterns) {
+          if (typeof p !== "string") {
+            errors.push(`banned_content.patterns: each entry must be a string, got ${typeof p}`);
+          } else {
+            const re = compileSafeRegex(p);
+            if (re === null) {
+              warnings.push(`banned_content pattern will be skipped (too long, invalid, or nested quantifiers): ${p}`);
+            }
+          }
+        }
+      }
+    }
+    if (parsed.retention) {
+      if (parsed.retention.max_age_days !== undefined && typeof parsed.retention.max_age_days !== "number") {
+        errors.push("retention.max_age_days must be a number");
+      }
+      if (parsed.retention.min_importance !== undefined && typeof parsed.retention.min_importance !== "number") {
+        errors.push("retention.min_importance must be a number");
+      }
+    }
+    if (errors.length > 0) {
+      console.error(`Validation FAILED for ${targetPath}:`);
+      for (const e of errors) console.error(`  ERROR: ${e}`);
+      for (const w of warnings) console.warn(`  WARNING: ${w}`);
+      process.exit(1);
+    }
+    if (warnings.length > 0) {
+      for (const w of warnings) console.warn(`  WARNING: ${w}`);
+    }
+    console.log(`OK: ${targetPath}`);
+    process.exit(0);
+
+  } else if (sub === "init") {
+    // Write a richly-commented template to .memento/policy.toml in cwd
+    const cwd = process.cwd();
+    const mementoDir = pathJoin(cwd, ".memento");
+    const dest = pathJoin(mementoDir, "policy.toml");
+    if (!existsSync(mementoDir)) {
+      mkdirSync(mementoDir, { recursive: true });
+    }
+    if (existsSync(dest)) {
+      console.error(`Policy file already exists: ${dest}`);
+      console.error("Remove it first or edit it directly.");
+      process.exit(1);
+    }
+    writeFileSync(dest, POLICY_INIT_TEMPLATE, "utf-8");
+    console.log(`Created: ${dest}`);
+    console.log("All sections are commented out. Uncomment and edit as needed.");
+
+  } else {
+    console.error(`Unknown policy command: ${sub}`);
+    console.error("Usage: memento-mcp policy [show|validate|init]");
+    process.exit(1);
+  }
+
 } else if (command === "--version" || command === "-v") {
   console.log("memento-mcp v1.0.0");
 

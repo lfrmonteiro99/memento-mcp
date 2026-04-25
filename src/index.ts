@@ -28,6 +28,7 @@ import { runCompressionCycle } from "./engine/compressor.js";
 import { toCompressionConfig } from "./lib/compression-config.js";
 import { configureFileMemoryCache } from "./lib/file-memory.js";
 import { promoteImportanceFromUtility } from "./engine/importance-promoter.js";
+import { collectPoliciesPerProject } from "./lib/policy.js";
 
 const log = createLogger(logLevelFromEnv());
 const config = loadConfig(getDefaultConfigPath());
@@ -52,6 +53,22 @@ function runMaintenance(): void {
     if (n > 0) log.info(`Pruned ${n} stale memories`);
   } catch (e) {
     log.warn(`Pruning error: ${e}`);
+  }
+
+  // Issue #9: apply per-project retention overrides (policy can only tighten global limits)
+  try {
+    const perProjectPolicies = collectPoliciesPerProject(db);
+    for (const { projectId, policy } of perProjectPolicies) {
+      const { maxAgeDays, minImportance } = policy.retention;
+      if (maxAgeDays !== undefined || minImportance !== undefined) {
+        const effectiveMaxAge = Math.min(maxAgeDays ?? config.pruning.maxAgeDays, config.pruning.maxAgeDays);
+        const effectiveMinImp = Math.max(minImportance ?? config.pruning.minImportance, config.pruning.minImportance);
+        const n2 = memRepo.pruneStaleByProject(projectId, effectiveMaxAge, effectiveMinImp);
+        if (n2 > 0) log.info(`Pruned ${n2} stale memories for project ${projectId} (policy override)`);
+      }
+    }
+  } catch (e) {
+    log.warn(`Per-project pruning error: ${e}`);
   }
 
   if (config.analytics.enabled && config.analytics.retentionDays > 0) {

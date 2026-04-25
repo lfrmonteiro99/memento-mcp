@@ -306,6 +306,20 @@ export class MemoriesRepo {
   }
 
   /**
+   * Issue #9: prune stale memories for a specific project.
+   * Used by the per-project retention policy override in the maintenance loop.
+   */
+  pruneStaleByProject(projectId: string, maxAgeDays: number, minImportance: number): number {
+    const result = this.db.prepare(`
+      UPDATE memories SET deleted_at = ?
+      WHERE deleted_at IS NULL AND is_pinned = 0
+        AND project_id = ?
+        AND importance_score < ? AND last_accessed_at < datetime('now', ? || ' days')
+    `).run(nowIso(), projectId, minImportance, `-${maxAgeDays}`);
+    return result.changes;
+  }
+
+  /**
    * Get memories created around a given memory (its chronological neighborhood).
    * If sameSessionOnly is true:
    *   - If focus.claude_session_id is set, prefer exact claude_session_id match.

@@ -15,6 +15,7 @@ import { cosineSimilarity } from "../engine/embeddings/cosine.js";
 import type { Config } from "../lib/config.js";
 import { resolveProfile } from "../lib/profiles.js";
 import { searchVault } from "../engine/vault-router.js";
+import { loadProjectPolicy } from "../lib/policy.js";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
 import { redactPrivate } from "../engine/privacy.js";
 
@@ -49,12 +50,19 @@ export async function processSearchHook(
     sessRepo.refill(session.id, config.budget.refill);
   }
 
+  // Issue #9: fold in per-project extra_stop_words if policy exists
+  const projectPath = process.cwd();
+  const projectPolicy = loadProjectPolicy(projectPath);
+  const stopWords = projectPolicy && projectPolicy.extraStopWords.length > 0
+    ? new Set([...profile.stopWords, ...projectPolicy.extraStopWords])
+    : profile.stopWords;
+
   // K6: use v2 keyword extractor (up to 8 keywords, phrase-aware) and v2 FTS builder.
   const keywords = extractKeywordsV2(prompt, {
     maxTokens: 8,
     preservePhrases: true,
     minWordLength: 3,
-    stopWords: profile.stopWords,
+    stopWords,
   });
   if (keywords.length < 2) return "";
 
