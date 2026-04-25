@@ -299,14 +299,18 @@ Use config or environment variables:
 
 Read more: [Mode profiles](docs/mode-profiles.md)
 
-### Claude Code hooks
+### Automatic context injection and capture
 
-Use hooks for automatic context injection and capture:
+Memory tools (`memory_store`, `memory_search`, `decisions_log`, …) work in any stdio-MCP client. Automatic injection and capture use whatever extension mechanism the client provides.
 
-- `SessionStart`
-- `UserPromptSubmit`
-- `PostToolUse`
-- `SessionEnd`
+| Client | MCP tools | Auto-inject on prompt | Auto-capture after tools | End-of-session summary |
+| --- | :---: | :---: | :---: | :---: |
+| Claude Code | yes (native hooks) | yes (native hooks) | yes (native hooks) | yes (native hooks) |
+| Cursor | yes | via `.cursorrules` | n/a (no per-tool hook) | via rule + manual `/summarize` |
+| Codex | yes | via `AGENTS.md` | n/a (no per-tool hook) | via rule + manual `/summarize` |
+| Other stdio-MCP | yes | depends on client rules format | depends on client | depends on client |
+
+Only Claude Code currently exposes deterministic lifecycle hooks. Other clients steer the agent through rule files (`.cursorrules`, `AGENTS.md`, system prompts), which is best-effort rather than guaranteed.
 
 Read more: [Installation & client setup](docs/install.md)
 
