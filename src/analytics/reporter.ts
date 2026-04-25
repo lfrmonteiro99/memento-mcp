@@ -81,6 +81,10 @@ export interface AnalyticsReport {
     avg_ratio: number;
     tokens_saved: number;
   };
+  search_layer_stats?: {
+    total_searches: number;
+    by_detail: Record<string, number>;
+  };
 }
 
 export function periodToSqlClause(period: string): string {
@@ -169,6 +173,25 @@ export function generateReport(db: Database.Database, projectId: string | null, 
     avg_ratio: number;
   };
 
+  // Search layer stats
+  const searchLayerRows = db.prepare(`
+    SELECT
+      json_extract(event_data, '$.detail') as detail,
+      COUNT(*) as count
+    FROM analytics_events
+    WHERE ${projSql} AND event_type = 'search_layer_used' ${clause}
+    GROUP BY detail
+  `).all(...projBind) as Array<{ detail: string; count: number }>;
+
+  const searchLayerByDetail: Record<string, number> = {};
+  let totalSearches = 0;
+  for (const r of searchLayerRows) {
+    if (r.detail) {
+      searchLayerByDetail[r.detail] = r.count;
+      totalSearches += r.count;
+    }
+  }
+
   return {
     period,
     session_count: sessionStats.session_count,
@@ -192,5 +215,9 @@ export function generateReport(db: Database.Database, projectId: string | null, 
       avg_ratio: compressionStats.avg_ratio,
       tokens_saved: Math.max(0, compressionStats.tokens_before - compressionStats.tokens_after),
     },
+    search_layer_stats: totalSearches > 0 ? {
+      total_searches: totalSearches,
+      by_detail: searchLayerByDetail,
+    } : undefined,
   };
 }

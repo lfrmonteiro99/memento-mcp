@@ -1,9 +1,11 @@
 import type Database from "better-sqlite3";
 import type { MemoriesRepo } from "../db/memories.js";
 import type { Config } from "../lib/config.js";
+import type { AnalyticsTracker } from "../analytics/tracker.js";
 import { applyDecay } from "../lib/decay.js";
 import { searchFileMemories } from "../lib/file-memory.js";
 import { formatIndex, formatFull, formatSummary, formatVaultEntry, formatVaultIndex } from "../lib/formatter.js";
+import { estimateTokensV2 } from "../engine/token-estimator.js";
 import { searchVault } from "../engine/vault-router.js";
 
 export async function handleMemorySearch(
@@ -14,6 +16,7 @@ export async function handleMemorySearch(
     limit?: number; detail?: "index" | "summary" | "full"; include_file_memories?: boolean;
   },
   db?: Database.Database,
+  analyticsTracker?: AnalyticsTracker,
 ): Promise<string> {
   const limit = params.limit ?? config.search.maxResults;
   const detail = params.detail ?? config.search.defaultDetail;
@@ -62,5 +65,19 @@ export async function handleMemorySearch(
       : vaultSection;
   }
 
-  return output || "No results found.";
+  const finalOutput = output || "No results found.";
+
+  // Emit analytics event for search layer used
+  if (analyticsTracker) {
+    const totalTokens = estimateTokensV2(finalOutput);
+    const sessionId = process.env.CLAUDE_SESSION_ID || "unknown";
+    analyticsTracker.track({
+      event_type: "search_layer_used",
+      session_id: sessionId,
+      event_data: JSON.stringify({ detail: detail || "full", results: limitedSqlite.length, total_tokens: totalTokens }),
+      tokens_cost: totalTokens,
+    });
+  }
+
+  return finalOutput;
 }

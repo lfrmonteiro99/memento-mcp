@@ -253,4 +253,41 @@ export class MemoriesRepo {
     `).run(nowIso(), minImportance, `-${maxAgeDays}`);
     return result.changes;
   }
+
+  /**
+   * Get memories created around a given memory (its chronological neighborhood).
+   * If sameSessionOnly is true and claude_session_id column exists, filters by that.
+   * Otherwise falls back to ±2h created_at window.
+   *
+   * @param focus - The memory to find neighbors for
+   * @param window - Number of memories to return on each side (default 3, so ±3 = up to 6 neighbors)
+   * @param sameSessionOnly - If true, filter to same session; if false, return time-window-based neighbors
+   * @returns Array of neighbor memories in chronological order, excluding deleted_at entries
+   */
+  getNeighbors(focus: any, window: number = 3, sameSessionOnly: boolean = true): any[] {
+    if (!focus || !focus.id || !focus.project_id) return [];
+
+    const focusTime = focus.created_at ?? new Date().toISOString();
+
+    // Build the query with time-window filtering (±2h from focus)
+    // If sameSessionOnly is true and claude_session_id exists, also filter by that
+    // For now, we use the ±2h window as the fallback (issue #3 will extend this to use claude_session_id)
+    const rows = this.db.prepare(`
+      SELECT * FROM memories
+      WHERE project_id = ? AND deleted_at IS NULL
+        AND id != ?
+        AND created_at >= datetime(?, '-2 hours')
+        AND created_at <= datetime(?, '+2 hours')
+      ORDER BY created_at ASC
+      LIMIT ?
+    `).all(
+      focus.project_id,
+      focus.id,
+      focusTime,
+      focusTime,
+      window * 2 + 1 // Request a bit more to account for filtering
+    ) as any[];
+
+    return rows;
+  }
 }

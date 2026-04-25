@@ -28,7 +28,8 @@ describe("formatFull", () => {
     const out = formatFull([memory], 200);
     expect(out).toContain("Sinmetro");
     expect(out).toContain("...");
-    expect(out.length).toBeLessThan(memory.body.length);
+    // formatFull now includes token cost markers and footer, so check that body is truncated
+    expect(out).not.toContain(memory.body); // full body should not be present (it's truncated)
   });
 });
 

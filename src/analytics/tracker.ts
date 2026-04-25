@@ -10,7 +10,8 @@ export type EventType =
   | "explicit_search"
   | "compression"
   | "budget_debit"
-  | "budget_refill";
+  | "budget_refill"
+  | "search_layer_used";
 
 export interface AnalyticsEvent {
   session_id: string;

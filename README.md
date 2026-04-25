@@ -527,12 +527,41 @@ Promoted notes are marked with:
 
 This gives idempotent create/update behavior when using `create_or_update`.
 
+## Token-aware search workflow
+
+The search tools implement **three layers of progressive disclosure**, each with visible token costs. Use the cheapest layer that answers your question.
+
+| Layer | Tool / Mode | Cost / Result | When to Use |
+|---|---|---|---|
+| 1 | `memory_search(detail="index")` | ~30 tokens | **First scan**: titles + scores only. Fastest, cheapest. |
+| 2 | `memory_search(detail="summary")` | ~80 tokens | **Shortlist**: preview first sentences of matching bodies. |
+| 3a | `memory_timeline(id, window=3)` | ~200 tokens | **Context around one hit**: chronological neighborhood (±2h session window). |
+| 3b | `memory_get(id)` | ~300-800 tokens | **Full body**: complete memory for final decision. |
+
+**Workflow example:**
+
+```
+1. memory_search("typescript strict mode", detail="index")
+   → Returns 5 hits with ~30 tokens each = 150 tokens total
+   
+2. memory_timeline(id="...", window=3)
+   → Fetches 6 neighbors around the #1 hit = ~200 tokens
+   → Gives chronological context: what was done before/after this decision
+   
+3. memory_get(id="...")  [optional]
+   → If timeline hints you need the full body = ~500 tokens
+```
+
+Every search result line shows its token cost in `[Nt]` format, so the model sees the cost upfront.
+The footer displays totals and hints about next-layer tools when applicable.
+
 ## MCP Tools
 
 | Tool | Description |
 |---|---|
 | `memory_store` | Store a typed memory in SQLite, with optional promotion to the Obsidian vault |
-| `memory_search` | Search ranked SQLite memories and append vault matches when enabled |
+| `memory_search` | Search ranked SQLite memories with progressive disclosure (index / summary / full); cost visible per result |
+| `memory_timeline` | Fetch chronological context around a memory (neighbors ±2h); cost ~200 tokens per neighbor |
 | `memory_get` | Retrieve full body for a SQLite memory or `vault:path/to/note.md` |
 | `memory_list` | List SQLite memories and optionally vault notes by kind or folder |
 | `memory_update` | Edit an existing memory (title, content, tags, importance, type, pinned) |
@@ -576,8 +605,22 @@ This gives idempotent create/update behavior when using `create_or_update`.
 | `project_path` | string | `""` | scope to a project (still includes globals) |
 | `memory_type` | string | `""` | filter by type |
 | `limit` | number | `10` | |
-| `detail` | enum | `"full"` | `"index"` / `"summary"` / `"full"` — progressive disclosure |
+| `detail` | enum | `"index"` | `"index"` / `"summary"` / `"full"` — progressive disclosure; start with `"index"` |
 | `include_file_memories` | bool | `true` | merge `~/.claude/projects/*/memory/*.md` results |
+
+</details>
+
+<details>
+<summary><code>memory_timeline</code></summary>
+
+Fetch memories created around a given memory (chronological neighborhood within same session or ±2h window).
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `id` | string | — | required; the memory id to find neighbors around |
+| `window` | number | `3` | how many neighbors on each side (±N); clamped to [1, 10] |
+| `detail` | enum | `"summary"` | `"index"` (compact) or `"summary"` (first sentence) |
+| `same_session_only` | bool | `true` | when true, filters by `claude_session_id` if available; falls back to ±2h `created_at` window |
 
 </details>
 

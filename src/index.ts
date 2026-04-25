@@ -11,6 +11,7 @@ import { createLogger, logLevelFromEnv } from "./lib/logger.js";
 import { handleMemoryStore } from "./tools/memory-store.js";
 import { handleMemorySearch } from "./tools/memory-search.js";
 import { handleMemoryGet } from "./tools/memory-get.js";
+import { handleMemoryTimeline } from "./tools/memory-timeline.js";
 import { handleMemoryList } from "./tools/memory-list.js";
 import { handleMemoryDelete } from "./tools/memory-delete.js";
 import { handleDecisionsLog } from "./tools/decisions-log.js";
@@ -164,28 +165,54 @@ server.tool(
 
 server.tool(
   "memory_search",
-  "Search memories by query. Returns ranked results.",
+  [
+    "Search memories with progressive disclosure.",
+    "Layer 1 (cheapest): detail='index' — titles + scores, ~30t per result. Start here.",
+    "Layer 2: detail='summary' — preview body, ~80t per result. Use to shortlist.",
+    "Layer 3: detail='full' — full body, ~150-300t per result. Use sparingly.",
+    "For chronological context around one hit, prefer memory_timeline(id) — ~200t per neighbor.",
+    "For one full body, prefer memory_get(id) — ~300-800t."
+  ].join(" "),
   {
     query: z.string(),
     project_path: z.string().default(""),
     memory_type: z.string().default(""),
     limit: z.number().default(10),
-    detail: z.enum(["index", "summary", "full"]).default("full"),
+    detail: z.enum(["index", "summary", "full"]).default("index"),
     include_file_memories: z.boolean().default(true),
   },
   async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemorySearch(memRepo, config, params, db) }],
+    content: [{ type: "text" as const, text: await handleMemorySearch(memRepo, config, params, db, analyticsTracker) }],
   })
 );
 
 server.tool(
   "memory_get",
-  "Get full content of a memory by ID.",
+  "Fetch the full body of a single memory by id (~300-800 tokens). Prefer memory_search first to find the right id.",
   {
     memory_id: z.string(),
   },
   async (params) => ({
     content: [{ type: "text" as const, text: await handleMemoryGet(memRepo, db, config, params) }],
+  })
+);
+
+server.tool(
+  "memory_timeline",
+  [
+    "Return memories created around a given memory id (chronological neighborhood).",
+    "Cost: ~200 tokens per neighbor.",
+    "Use after memory_search(detail='index') when you need work-session context for one specific hit.",
+    "Cheaper than calling memory_get on each neighbor individually."
+  ].join(" "),
+  {
+    id: z.string(),
+    window: z.number().int().min(1).max(10).default(3),
+    detail: z.enum(["index", "summary"]).default("summary"),
+    same_session_only: z.boolean().default(true),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryTimeline(memRepo, params) }],
   })
 );
 
