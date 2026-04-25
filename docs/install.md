@@ -70,6 +70,37 @@ command = "/home/you/.nvm/versions/node/v20.20.2/bin/node"
 args = ["/home/you/.nvm/versions/node/v20.20.2/lib/node_modules/@lfrmonteiro99/memento-memory-mcp/dist/cli/main.js"]
 ```
 
+#### Codex automation (no native hooks)
+
+Codex does not have lifecycle hooks. To approximate the Claude Code hooks behavior, add an `AGENTS.md` to the project root (Codex loads it automatically) telling the agent to call the memory tools itself:
+
+```markdown
+# Project memory (memento-mcp)
+
+This project uses memento-mcp. Follow these rules every session.
+
+## At the start of a session
+Call `memory_search` with the user's first non-trivial prompt and read the
+top 5 results. Also call `memory_search(query="pinned", detail="full")` to
+load pinned context. Treat returned `pitfall` and `decision` memories as
+binding constraints.
+
+## During the session
+- Before proposing a non-trivial change, call `memory_search` with keywords
+  from the task. Mention any matching `decision` or `pitfall` in your reply.
+- After learning something durable (a fix, a convention, a gotcha), call
+  `memory_store` with the right `memory_type` (`fact` / `decision` /
+  `pitfall` / `pattern` / `architecture` / `preference`) and a `scope` of
+  `project` (or `team` if it should sync via git).
+
+## At the end of a session
+When the user signals the session is wrapping up, call `memory_store` with
+`memory_type="session_summary"` and a concise digest of decisions made,
+pitfalls discovered, and follow-ups.
+```
+
+This is best-effort — the agent must choose to follow the rules, unlike Claude Code hooks which the harness enforces.
+
 ### Claude Code
 
 Claude Code uses `~/.claude/settings.json`.
@@ -88,7 +119,7 @@ Add the MCP server:
 }
 ```
 
-Add hooks for context injection and auto-capture:
+Add hooks for context injection and auto-capture (Claude Code is currently the only client where these run automatically — see the per-client sections below for other clients):
 
 ```json
 {
@@ -134,6 +165,31 @@ Cursor uses `~/.cursor/mcp.json`.
 }
 ```
 
+#### Cursor automation (no native hooks)
+
+Cursor does not have lifecycle hooks either. Use a project rule file at `.cursor/rules/memento.mdc` (or `.cursorrules` for legacy setups):
+
+```markdown
+---
+description: Use memento-mcp memory tools throughout the session
+alwaysApply: true
+---
+
+This project uses memento-mcp for persistent memory.
+
+- At the start of every conversation, call `memory_search` with the user's
+  first task-shaped prompt and read the top results before answering.
+- Before proposing changes, call `memory_search` for relevant keywords and
+  honor any returned `decision` or `pitfall` memories.
+- When the user shares a durable fact, decision, convention, or gotcha,
+  call `memory_store` with the appropriate `memory_type` and `scope`
+  (`project` for repo-wide, `team` to sync via git, `global` for personal).
+- Before wrapping up, call `memory_store` with
+  `memory_type="session_summary"` summarizing what changed.
+```
+
+This is best-effort — the agent must follow the rule. Unlike Claude Code hooks, the client does not enforce it.
+
 ### Generic MCP client
 
 If your client supports stdio MCP servers, use this shape:
@@ -147,6 +203,19 @@ If your client supports stdio MCP servers, use this shape:
 ```
 
 If PATH resolution is unreliable in your client, prefer the absolute `node` + `dist/cli/main.js` form shown above for Codex.
+
+#### Generic-client automation
+
+If the client lacks lifecycle hooks, your only lever is a system-prompt or rule file telling the agent to call the memory tools at the right moments. The Codex `AGENTS.md` block above is a reasonable starting template — adapt the file path to whatever your client loads (`.aider.conf.yml` system prompt, Continue `config.json` `systemMessage`, etc.).
+
+If the client *does* expose hooks or pre/post-message scripts, you can call the hook binaries directly:
+
+- `memento-hook-session` — equivalent of `SessionStart`
+- `memento-hook-search` — equivalent of `UserPromptSubmit`
+- `memento-hook-capture` — equivalent of `PostToolUse` (reads tool I/O on stdin)
+- `memento-hook-summarize` — equivalent of `SessionEnd`
+
+All four read JSON on stdin in the Claude Code hook payload shape and write injection text to stdout. Adapter shims for other harnesses are welcome as PRs.
 
 ## Verify installation
 
