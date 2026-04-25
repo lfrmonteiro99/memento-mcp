@@ -16,6 +16,7 @@ import type { Config } from "../lib/config.js";
 import { resolveProfile } from "../lib/profiles.js";
 import { searchVault } from "../engine/vault-router.js";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
+import { redactPrivate } from "../engine/privacy.js";
 
 const logger = createLogger(logLevelFromEnv());
 const TIER_LIMITS = { trivial: 0, standard: 3, complex: 5 };
@@ -177,7 +178,7 @@ export async function processSearchHook(
 
   const lines: string[] = [];
   for (const r of topDb) {
-    lines.push(`[db] ${r.title}: ${(r.body ?? "").slice(0, 120)}`);
+    lines.push(`[db] ${r.title}: ${redactPrivate(r.body ?? "").slice(0, 120)}`);
   }
   for (const r of fileResults) {
     lines.push(`[file] ${r.title}: ${(r.body ?? "").slice(0, 120)}`);

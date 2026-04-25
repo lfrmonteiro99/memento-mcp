@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { nowIso } from "./database.js";
+import { hasPrivate } from "../engine/privacy.js";
 
 function buildFtsQuery(query: string): string {
   const tokens = query.split(/\s+/).filter(t => t.length > 0);
@@ -26,10 +27,12 @@ export class DecisionsRepo {
     if (supersedesId) {
       this.db.prepare("UPDATE decisions SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL").run(now, supersedesId);
     }
+    // Issue #4: set has_private flag on store.
+    const hasPrivateFlag = hasPrivate(body) ? 1 : 0;
     this.db.prepare(`
-      INSERT INTO decisions (id, project_id, title, body, category, importance_score, supersedes_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, projectId, title, body, category, importance, supersedesId ?? null, now);
+      INSERT INTO decisions (id, project_id, title, body, category, importance_score, supersedes_id, has_private, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, projectId, title, body, category, importance, supersedesId ?? null, hasPrivateFlag, now);
     return id;
   }
 

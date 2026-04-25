@@ -4,6 +4,7 @@ import type { EmbeddingsRepo } from "../db/embeddings.js";
 import type { Config } from "../lib/config.js";
 import { createProvider } from "../engine/embeddings/provider.js";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
+import { validateTags } from "../engine/privacy.js";
 
 const logger = createLogger(logLevelFromEnv());
 
@@ -21,6 +22,14 @@ export async function handleMemoryUpdate(
   config?: Config,
   embRepo?: EmbeddingsRepo,
 ): Promise<string> {
+  // Issue #4: validate balanced <private> tags when content is provided.
+  if (params.content !== undefined) {
+    const tagValidation = validateTags(params.content);
+    if (!tagValidation.valid) {
+      return `Memory not updated: unbalanced <private> tags. Found ${tagValidation.opens} opening, ${tagValidation.closes} closing.`;
+    }
+  }
+
   const patch: Parameters<MemoriesRepo["update"]>[1] = {};
   if (params.title !== undefined) patch.title = params.title;
   if (params.content !== undefined) patch.body = params.content;

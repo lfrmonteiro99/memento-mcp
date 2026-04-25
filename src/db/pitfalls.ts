@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { nowIso } from "./database.js";
+import { hasPrivate } from "../engine/privacy.js";
 
 export class PitfallsRepo {
   constructor(private db: Database.Database) {}
@@ -20,17 +21,19 @@ export class PitfallsRepo {
       "SELECT id, occurrence_count FROM pitfalls WHERE project_id = ? AND title = ? AND deleted_at IS NULL AND resolved = 0"
     ).get(projectId, title) as any;
 
+    // Issue #4: set has_private flag on store/update.
+    const hasPrivateFlag = hasPrivate(body) ? 1 : 0;
     if (existing) {
-      this.db.prepare("UPDATE pitfalls SET occurrence_count = occurrence_count + 1, last_seen_at = ?, body = ? WHERE id = ?")
-        .run(now, body, existing.id);
+      this.db.prepare("UPDATE pitfalls SET occurrence_count = occurrence_count + 1, last_seen_at = ?, body = ?, has_private = ? WHERE id = ?")
+        .run(now, body, hasPrivateFlag, existing.id);
       return existing.id;
     }
 
     const id = randomUUID();
     this.db.prepare(`
-      INSERT INTO pitfalls (id, project_id, title, body, importance_score, last_seen_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, projectId, title, body, importance, now, now);
+      INSERT INTO pitfalls (id, project_id, title, body, importance_score, last_seen_at, has_private, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, projectId, title, body, importance, now, hasPrivateFlag, now);
     return id;
   }
 

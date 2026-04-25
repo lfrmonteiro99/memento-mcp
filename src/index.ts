@@ -190,9 +190,10 @@ server.tool(
 
 server.tool(
   "memory_get",
-  "Fetch the full body of a single memory by id (~300-800 tokens). Prefer memory_search first to find the right id.",
+  "Fetch the full body of a single memory by id (~300-800 tokens). Prefer memory_search first to find the right id. Set reveal_private=true to see content inside <private> tags (emits an audit event).",
   {
     memory_id: z.string(),
+    reveal_private: z.boolean().default(false),
   },
   async (params) => ({
     content: [{ type: "text" as const, text: await handleMemoryGet(memRepo, db, config, params) }],

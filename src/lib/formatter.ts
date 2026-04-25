@@ -1,6 +1,10 @@
 // src/lib/formatter.ts
 import type { SourceIndexEntry } from "../sources/source.js";
 import { estimateTokensV2 } from "../engine/token-estimator.js";
+import { redactPrivate, hasPrivate } from "../engine/privacy.js";
+import { createLogger, logLevelFromEnv } from "./logger.js";
+
+const log = createLogger(logLevelFromEnv());
 
 export interface MemoryRow {
   id: string;
@@ -12,6 +16,14 @@ export interface MemoryRow {
   importance_score?: number;
   created_at?: string;
   [key: string]: any;
+}
+
+/** Apply privacy redaction to a memory body. Warn once if the title contains private tags. */
+function safeBody(m: MemoryRow): string | undefined {
+  if (m.title && hasPrivate(m.title)) {
+    log.warn(`Memory ${m.id} title contains <private> tags — titles are not redacted in output`);
+  }
+  return m.body !== undefined ? redactPrivate(m.body) : undefined;
 }
 
 function formatIndexLine(m: MemoryRow): string {
@@ -57,14 +69,15 @@ export function formatFull(memories: MemoryRow[], bodyPreviewChars = 200): strin
   const resultLines = memories.map(m => {
     const src = m.source ?? "sqlite";
     const score = typeof m.score === "number" ? m.score.toFixed(2) : "-";
+    const body = safeBody(m);
     const lines = [
       `[${src}] (${m.memory_type}) ${m.title}`,
       `  ID: ${m.id}`,
     ];
-    if (m.body) {
-      const preview = m.body.length > bodyPreviewChars
-        ? m.body.slice(0, bodyPreviewChars) + "..."
-        : m.body;
+    if (body) {
+      const preview = body.length > bodyPreviewChars
+        ? body.slice(0, bodyPreviewChars) + "..."
+        : body;
       lines.push(`  ${preview}`);
     }
     lines.push(`  Score: ${score} | Created: ${m.created_at ?? "?"}`);
@@ -76,14 +89,15 @@ export function formatFull(memories: MemoryRow[], bodyPreviewChars = 200): strin
   const totalTokens = memories.reduce((sum, m) => {
     const src = m.source ?? "sqlite";
     const score = typeof m.score === "number" ? m.score.toFixed(2) : "-";
+    const body = safeBody(m);
     const lines = [
       `[${src}] (${m.memory_type}) ${m.title}`,
       `  ID: ${m.id}`,
     ];
-    if (m.body) {
-      const preview = m.body.length > bodyPreviewChars
-        ? m.body.slice(0, bodyPreviewChars) + "..."
-        : m.body;
+    if (body) {
+      const preview = body.length > bodyPreviewChars
+        ? body.slice(0, bodyPreviewChars) + "..."
+        : body;
       lines.push(`  ${preview}`);
     }
     lines.push(`  Score: ${score} | Created: ${m.created_at ?? "?"}`);
@@ -124,9 +138,10 @@ export function formatVaultIndex(entries: SourceIndexEntry[]): string {
   }).join("\n");
 }
 
-export function formatDetail(memory: MemoryRow): string {
+export function formatDetail(memory: MemoryRow, revealPrivate = false): string {
   if (!memory) return "Memory not found.";
-  return `[${memory.memory_type}] ${memory.title}\nID: ${memory.id}\n\n${memory.body ?? "(no body)"}`;
+  const body = revealPrivate ? (memory.body ?? "(no body)") : redactPrivate(memory.body ?? "(no body)");
+  return `[${memory.memory_type}] ${memory.title}\nID: ${memory.id}\n\n${body}`;
 }
 
 function extractFirstSentences(text: string, count: number): string {
@@ -161,7 +176,8 @@ export function formatTimeline(
       return `${marker} ${time}  ${m.title} (id=${m.id})`;
     } else {
       // summary mode
-      const summary = m.body ? extractFirstSentences(m.body, 1) : "(no body)";
+      const body = safeBody(m);
+      const summary = body ? extractFirstSentences(body, 1) : "(no body)";
       return `${marker} ${time}  ${m.title}\n    ${summary}`;
     }
   }).join("\n");
@@ -176,8 +192,9 @@ export function formatSummary(memories: MemoryRow[], maxSentences = 2): string {
     const lines: string[] = [];
     const score = typeof m.score === "number" ? m.score.toFixed(2) : "-";
     lines.push(`[${m.id}] ${m.title} (score:${score})`);
-    if (m.body) {
-      lines.push(`  ${extractFirstSentences(m.body, maxSentences)}`);
+    const body = safeBody(m);
+    if (body) {
+      lines.push(`  ${extractFirstSentences(body, maxSentences)}`);
     }
     const tags = parseTags(m.tags);
     if (tags.length > 0) {
@@ -192,8 +209,9 @@ export function formatSummary(memories: MemoryRow[], maxSentences = 2): string {
     const lines: string[] = [];
     const score = typeof m.score === "number" ? m.score.toFixed(2) : "-";
     lines.push(`[${m.id}] ${m.title} (score:${score})`);
-    if (m.body) {
-      lines.push(`  ${extractFirstSentences(m.body, maxSentences)}`);
+    const body = safeBody(m);
+    if (body) {
+      lines.push(`  ${extractFirstSentences(body, maxSentences)}`);
     }
     const tags = parseTags(m.tags);
     if (tags.length > 0) {

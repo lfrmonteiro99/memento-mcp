@@ -7,6 +7,7 @@ import { rebuildVaultIndex } from "../engine/vault-index.js";
 import { persistMemoryToVault } from "../engine/vault-writer.js";
 import { createProvider } from "../engine/embeddings/provider.js";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
+import { validateTags } from "../engine/privacy.js";
 
 const logger = createLogger(logLevelFromEnv());
 
@@ -17,6 +18,12 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
   persist_to_vault?: boolean; vault_mode?: "create" | "create_or_update";
   vault_kind?: string; vault_folder?: string; vault_note_title?: string;
 }, db?: Database.Database, config?: Config, embRepo?: EmbeddingsRepo): Promise<string> {
+  // Issue #4: validate balanced <private> tags before storing.
+  const tagValidation = validateTags(params.content ?? "");
+  if (!tagValidation.valid) {
+    return `Memory not stored: unbalanced <private> tags. Found ${tagValidation.opens} opening, ${tagValidation.closes} closing.`;
+  }
+
   const memoryType = params.memory_type ?? "fact";
   const shouldPersistToVault =
     params.persist_to_vault === true ||

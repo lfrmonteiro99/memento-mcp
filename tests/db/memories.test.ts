@@ -290,3 +290,61 @@ describe("batched access tracking (v2)", () => {
     })).toThrow(/cycle/);
   });
 });
+
+describe("has_private flag and FTS privacy (issue #4)", () => {
+  let db: ReturnType<typeof createDatabase>;
+  let repo: MemoriesRepo;
+  const dbPath = join(tmpdir(), `memento-mem-private-test-${Date.now()}.sqlite`);
+
+  beforeEach(() => {
+    db = createDatabase(dbPath);
+    repo = new MemoriesRepo(db);
+  });
+  afterEach(() => { db.close(); rmSync(dbPath, { force: true }); });
+
+  it("store() sets has_private=1 when body contains private tags", () => {
+    const id = repo.store({ title: "secret", body: "foo <private>bar</private> baz", memoryType: "fact", scope: "global" });
+    const row = db.prepare("SELECT has_private FROM memories WHERE id = ?").get(id) as any;
+    expect(row.has_private).toBe(1);
+  });
+
+  it("store() sets has_private=0 when body has no private tags", () => {
+    const id = repo.store({ title: "plain", body: "no secrets here", memoryType: "fact", scope: "global" });
+    const row = db.prepare("SELECT has_private FROM memories WHERE id = ?").get(id) as any;
+    expect(row.has_private).toBe(0);
+  });
+
+  it("FTS does NOT match terms inside private regions", () => {
+    repo.store({ title: "private memory", body: "foo <private>secretword</private> baz", memoryType: "fact", scope: "global" });
+    const results = repo.search("secretword");
+    expect(results.length).toBe(0);
+  });
+
+  it("FTS still matches terms outside private regions", () => {
+    repo.store({ title: "mixed memory", body: "foo <private>secretword</private> baz", memoryType: "fact", scope: "global" });
+    const results = repo.search("foo");
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].title).toBe("mixed memory");
+  });
+
+  it("update() sets has_private=1 when new body contains private tags", () => {
+    const id = repo.store({ title: "plain", body: "public content", memoryType: "fact", scope: "global" });
+    repo.update(id, { body: "now <private>secret</private> here" });
+    const row = db.prepare("SELECT has_private FROM memories WHERE id = ?").get(id) as any;
+    expect(row.has_private).toBe(1);
+  });
+
+  it("update() sets has_private=0 when new body has no private tags", () => {
+    const id = repo.store({ title: "was secret", body: "foo <private>bar</private> baz", memoryType: "fact", scope: "global" });
+    repo.update(id, { body: "now public content" });
+    const row = db.prepare("SELECT has_private FROM memories WHERE id = ?").get(id) as any;
+    expect(row.has_private).toBe(0);
+  });
+
+  it("FTS does NOT match private terms after update with strip_private trigger", () => {
+    const id = repo.store({ title: "updatable", body: "public content", memoryType: "fact", scope: "global" });
+    repo.update(id, { body: "public content <private>privatestuff</private> end" });
+    const results = repo.search("privatestuff");
+    expect(results.length).toBe(0);
+  });
+});

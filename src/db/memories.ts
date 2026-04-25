@@ -2,6 +2,7 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { nowIso } from "./database.js";
+import { hasPrivate } from "../engine/privacy.js";
 
 function sanitizeFtsToken(token: string): string {
   return token.replace(/"/g, '""');
@@ -84,16 +85,18 @@ export class MemoriesRepo {
 
     // M5: source column included in the INSERT. Defaults to 'user' if not provided.
     // Issue #3: claude_session_id column added in migration v5.
+    // Issue #4: has_private column added in migration v6.
+    const hasPrivateFlag = hasPrivate(params.body ?? "") ? 1 : 0;
     this.db.prepare(`
       INSERT INTO memories (id, project_id, memory_type, scope, title, body, tags,
                             importance_score, is_pinned, supersedes_memory_id, source,
-                            claude_session_id,
+                            claude_session_id, has_private,
                             created_at, updated_at, last_accessed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, projectId, params.memoryType ?? "fact", params.scope ?? "project",
            params.title, params.body, tagsStr, params.importance ?? 0.5,
            params.pin ? 1 : 0, params.supersedesId || null, params.source ?? "user",
-           params.claudeSessionId ?? null,
+           params.claudeSessionId ?? null, hasPrivateFlag,
            now, now, now);
     return id;
   }
@@ -236,6 +239,11 @@ export class MemoriesRepo {
     if (patch.pinned !== undefined) { fields.push("is_pinned = ?"); values.push(patch.pinned ? 1 : 0); }
 
     if (fields.length === 0) return false;
+    // Issue #4: update has_private when body changes.
+    if (patch.body !== undefined) {
+      fields.push("has_private = ?");
+      values.push(hasPrivate(patch.body) ? 1 : 0);
+    }
     fields.push("updated_at = ?");
     values.push(nowIso());
     values.push(id);

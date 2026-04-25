@@ -2,6 +2,7 @@ import BetterSqlite3 from "better-sqlite3";
 import type Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { stripPrivate } from "../engine/privacy.js";
 
 interface Migration {
   version: number;
@@ -254,6 +255,78 @@ CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model);
       `);
     },
   },
+  {
+    version: 6,
+    name: "privacy_private_tags",
+    sql: "",
+    afterSql: (db: Database.Database) => {
+      // Determine which tables exist (minimal test schemas may be missing some).
+      const existingTables6 = new Set(
+        (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>)
+          .map(r => r.name)
+      );
+
+      // Add has_private column to memories (always present by v6).
+      const memoryCols6 = db.pragma("table_info(memories)") as Array<{ name: string }>;
+      if (!memoryCols6.map(c => c.name).includes("has_private")) {
+        db.exec("ALTER TABLE memories ADD COLUMN has_private INTEGER NOT NULL DEFAULT 0");
+      }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_has_private ON memories(has_private) WHERE deleted_at IS NULL;`);
+      db.exec(`UPDATE memories SET has_private = 1 WHERE body LIKE '%<private>%' AND body LIKE '%</private>%';`);
+
+      // decisions table may not exist in minimal test schemas.
+      if (existingTables6.has("decisions")) {
+        const decisionCols6 = db.pragma("table_info(decisions)") as Array<{ name: string }>;
+        if (!decisionCols6.map(c => c.name).includes("has_private")) {
+          db.exec("ALTER TABLE decisions ADD COLUMN has_private INTEGER NOT NULL DEFAULT 0");
+        }
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_decisions_has_private ON decisions(has_private) WHERE deleted_at IS NULL;`);
+        db.exec(`UPDATE decisions SET has_private = 1 WHERE body LIKE '%<private>%' AND body LIKE '%</private>%';`);
+      }
+
+      // pitfalls table may not exist in minimal test schemas.
+      if (existingTables6.has("pitfalls")) {
+        const pitfallCols6 = db.pragma("table_info(pitfalls)") as Array<{ name: string }>;
+        if (!pitfallCols6.map(c => c.name).includes("has_private")) {
+          db.exec("ALTER TABLE pitfalls ADD COLUMN has_private INTEGER NOT NULL DEFAULT 0");
+        }
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_pitfalls_has_private ON pitfalls(has_private) WHERE deleted_at IS NULL;`);
+        db.exec(`UPDATE pitfalls SET has_private = 1 WHERE body LIKE '%<private>%' AND body LIKE '%</private>%';`);
+      }
+
+      // Drop and recreate FTS triggers to call strip_private() UDF.
+      // strip_private is registered in createDatabase() BEFORE migrations run.
+      if (existingTables6.has("memory_fts")) {
+        db.exec(`
+DROP TRIGGER IF EXISTS memories_ai;
+DROP TRIGGER IF EXISTS memories_au;
+CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+    INSERT INTO memory_fts(rowid, title, body) VALUES (new.rowid, new.title, strip_private(new.body));
+END;
+CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+    INSERT INTO memory_fts(memory_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, strip_private(old.body));
+    INSERT INTO memory_fts(rowid, title, body) VALUES (new.rowid, new.title, strip_private(new.body));
+END;
+INSERT INTO memory_fts(memory_fts) VALUES('rebuild');
+        `);
+      }
+
+      if (existingTables6.has("decisions_fts")) {
+        db.exec(`
+DROP TRIGGER IF EXISTS decisions_ai;
+DROP TRIGGER IF EXISTS decisions_au;
+CREATE TRIGGER decisions_ai AFTER INSERT ON decisions BEGIN
+    INSERT INTO decisions_fts(rowid, title, body) VALUES (new.rowid, new.title, strip_private(new.body));
+END;
+CREATE TRIGGER decisions_au AFTER UPDATE ON decisions BEGIN
+    INSERT INTO decisions_fts(decisions_fts, rowid, title, body) VALUES ('delete', old.rowid, old.title, strip_private(old.body));
+    INSERT INTO decisions_fts(rowid, title, body) VALUES (new.rowid, new.title, strip_private(new.body));
+END;
+INSERT INTO decisions_fts(decisions_fts) VALUES('rebuild');
+        `);
+      }
+    },
+  },
 ];
 
 const FTS_TRIGGERS_SQL = `
@@ -288,6 +361,12 @@ export function createDatabase(dbPath: string): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
+
+  // Register strip_private UDF BEFORE running migrations so the v6 trigger DDL
+  // can reference it immediately (better-sqlite3 UDFs are connection-local).
+  db.function("strip_private", { deterministic: true }, (text: unknown) => {
+    return stripPrivate(typeof text === "string" ? text : "");
+  });
 
   const currentVersion = db.pragma("user_version", { simple: true }) as number;
 
