@@ -921,6 +921,32 @@ node -e "const D=require('better-sqlite3');const d=new D(process.env.HOME+'/.loc
 
 The server never deletes pre-existing v1 memories. To wipe and start fresh, delete the SQLite file — it will be recreated on next boot.
 
+## Web Inspector
+
+Browse stored memories, decisions, pitfalls, sessions, and analytics in a local web UI:
+
+```bash
+memento-mcp ui                    # http://127.0.0.1:37778, read-only
+memento-mcp ui --enable-edit      # also expose pin/unpin and soft-delete
+memento-mcp ui --port 8080 --open # custom port; auto-open browser
+```
+
+Flags:
+
+- `--port` — bind port (default `37778`)
+- `--host` — bind interface (default `127.0.0.1`)
+- `--enable-edit` — expose `POST /api/memories/:id/pin` and `DELETE /api/memories/:id`
+- `--open` — open the URL in the default browser
+
+The inspector reads the same SQLite database the MCP server uses. It binds to `127.0.0.1` by default; binding to any other host prints a stderr warning because memory contents would be reachable on your network. There is **no authentication** — keep the UI on localhost.
+
+Edit endpoints additionally require:
+
+- `Content-Type: application/json`
+- `X-Memento-UI: 1` header (set by the bundled JS — drive-by browser POSTs are rejected)
+
+Bodies marked with `<private>...</private>` (see *Privacy* section) are redacted to `[REDACTED]` in API responses unless you pass `?show_private=1` on a server started with `--enable-edit`.
+
 ## Development
 
 ```bash

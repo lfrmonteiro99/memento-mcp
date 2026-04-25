@@ -20,7 +20,7 @@
     "memento-hook-summarize": "dist/hooks/session-summarize-bin.js"
   },
   "scripts": {
-    "build": "tsup src/index.ts src/cli/main.ts src/hooks/search-context.ts src/hooks/session-context.ts src/hooks/auto-capture-bin.ts src/hooks/session-summarize-bin.ts --format esm --dts --clean",
+    "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",

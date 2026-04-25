@@ -267,6 +267,54 @@ This file describes the vault layout for memento-mcp routing.
   console.log(`Done. Embedded ${processed} memories.`);
   db.close();
 
+} else if (command === "ui") {
+  const { loadConfig, getDefaultConfigPath, getDefaultDbPath } = await import("../lib/config.js");
+  const { createDatabase } = await import("../db/database.js");
+  const { startWebServer } = await import("../server/web.js");
+
+  const args = argv.slice(3);
+  let port = 37778;
+  let host = "127.0.0.1";
+  let enableEdit = false;
+  let openBrowser = false;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--port" && args[i + 1]) { port = Number(args[++i]); }
+    else if (args[i] === "--host" && args[i + 1]) { host = args[++i]; }
+    else if (args[i] === "--enable-edit") { enableEdit = true; }
+    else if (args[i] === "--open") { openBrowser = true; }
+  }
+
+  const config = loadConfig(getDefaultConfigPath());
+  const db = createDatabase(config.database.path || getDefaultDbPath());
+
+  const server = startWebServer({ port, host, enableEdit, db, config });
+
+  await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+  const addr = server.address();
+  const actualPort = typeof addr === "object" && addr ? addr.port : port;
+  const url = `http://${host}:${actualPort}`;
+  console.log(`memento-mcp UI: ${url}`);
+  if (enableEdit) console.log(`  edit mode enabled (pin/delete available)`);
+  else console.log(`  read-only (pass --enable-edit to allow pin/delete)`);
+
+  if (openBrowser) {
+    const { spawn } = await import("node:child_process");
+    const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+    try { spawn(opener, [url], { stdio: "ignore", detached: true }).unref(); } catch { /* ignore */ }
+  }
+
+  const shutdown = () => {
+    console.log("\nShutting down…");
+    server.close(() => {
+      db.close();
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 2000).unref();
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
 } else if (command === "--version" || command === "-v") {
   console.log("memento-mcp v1.0.0");
 

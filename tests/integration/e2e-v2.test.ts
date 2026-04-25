@@ -256,11 +256,11 @@ describe("end-to-end v2", () => {
     expect(pkg.bin["memento-hook-capture"]).toBe("dist/hooks/auto-capture-bin.js");
   });
 
-  it("G8: build script includes all four entry points", () => {
-    const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf-8"));
-    expect(pkg.scripts.build).toContain("src/hooks/auto-capture-bin.ts");
-    expect(pkg.scripts.build).toContain("src/hooks/search-context.ts");
-    expect(pkg.scripts.build).toContain("src/hooks/session-context.ts");
-    expect(pkg.scripts.build).toContain("src/cli/main.ts");
+  it("G8: tsup config includes all four entry points", () => {
+    const tsupConfig = readFileSync(join(process.cwd(), "tsup.config.ts"), "utf-8");
+    expect(tsupConfig).toContain("src/hooks/auto-capture-bin.ts");
+    expect(tsupConfig).toContain("src/hooks/search-context.ts");
+    expect(tsupConfig).toContain("src/hooks/session-context.ts");
+    expect(tsupConfig).toContain("src/cli/main.ts");
   });
 });
