@@ -47,10 +47,10 @@ describe("database migration v2", () => {
     expect(col!.dflt_value).toContain("0.5");
   });
 
-  it("sets schema version to 7 (latest migration)", () => {
+  it("sets schema version to 8 (latest migration)", () => {
     db = createDatabase(dbPath);
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(7);
+    expect(version).toBe(8);
   });
 
   it("is idempotent - running createDatabase twice does not error", () => {
@@ -58,7 +58,7 @@ describe("database migration v2", () => {
     db.close();
     db = createDatabase(dbPath);
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(7);
+    expect(version).toBe(8);
   });
 
   it("migrates existing v1 database without data loss", () => {

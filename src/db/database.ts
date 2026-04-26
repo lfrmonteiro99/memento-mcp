@@ -348,6 +348,29 @@ CREATE TABLE IF NOT EXISTS sync_file_hashes (
 CREATE INDEX IF NOT EXISTS idx_sync_file_hashes_project ON sync_file_hashes(project_id);
 `,
   },
+  {
+    version: 8,
+    name: "memory_edges",
+    sql: `
+CREATE TABLE IF NOT EXISTS memory_edges (
+  from_id    TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  to_id      TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  edge_type  TEXT NOT NULL,
+  weight     REAL NOT NULL DEFAULT 1.0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (from_id, to_id, edge_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_edges_from ON memory_edges(from_id);
+CREATE INDEX IF NOT EXISTS idx_memory_edges_to ON memory_edges(to_id);
+CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type);
+
+INSERT OR IGNORE INTO memory_edges (from_id, to_id, edge_type, weight, created_at)
+  SELECT id, supersedes_memory_id, 'supersedes', 1.0, created_at
+  FROM memories
+  WHERE supersedes_memory_id IS NOT NULL;
+`,
+  },
 ];
 
 const FTS_TRIGGERS_SQL = `
