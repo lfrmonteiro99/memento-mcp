@@ -85,6 +85,6 @@ jobs:
             --head "${{ steps.commit.outputs.branch }}" \
             --title "chore(release): v${{ inputs.version }}" \
             --body "Automated version bump for v${{ inputs.version }}. Already published to npm and tagged."
-          gh pr merge "${{ steps.commit.outputs.branch }}" --squash --delete-branch --auto
+          gh pr merge "${{ steps.commit.outputs.branch }}" --squash --delete-branch
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
