@@ -6,7 +6,6 @@
 // This is the most critical test in the suite: it verifies the package's
 // primary entry point works as an MCP server.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { spawnSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -21,25 +20,10 @@ describe("MCP server — protocol smoke test", () => {
   let transport: StdioClientTransport | null = null;
 
   beforeAll(async () => {
-    // R8: build the binary as a prerequisite.
-    const buildResult = spawnSync(
-      "./node_modules/.bin/tsup",
-      [
-        "src/index.ts",
-        "src/cli/main.ts",
-        "src/hooks/search-context.ts",
-        "src/hooks/session-context.ts",
-        "src/hooks/auto-capture-bin.ts",
-        "src/hooks/session-summarize-bin.ts",
-        "--format", "esm", "--dts", "--clean",
-      ],
-      { cwd: process.cwd(), encoding: "utf-8", timeout: 120_000 },
-    );
-    if (buildResult.status !== 0) {
-      throw new Error(`Build prerequisite failed.\nstderr: ${buildResult.stderr}\nstdout: ${buildResult.stdout}`);
-    }
+    // The MCP server binary is built once by tests/setup/build-once.ts
+    // (registered as vitest globalSetup), so we just check the artifact exists.
     if (!existsSync(distEntry)) {
-      throw new Error(`Built MCP server missing at ${distEntry}`);
+      throw new Error(`Built MCP server missing at ${distEntry} (expected globalSetup to produce it).`);
     }
 
     // Sandbox HOME so the server resolves its DB/config under a tempdir

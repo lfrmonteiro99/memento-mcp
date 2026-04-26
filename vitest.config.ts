@@ -21,6 +21,10 @@ export default defineConfig({
     globals: true,
     include: ["tests/**/*.test.ts"],
     testTimeout: 10000,
+    // Built once before any spec runs; integration specs that spawn the MCP
+    // server consume `dist/index.js` directly and would otherwise race each
+    // other when each tried to rebuild + clean the same directory.
+    globalSetup: ["tests/setup/build-once.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary"],

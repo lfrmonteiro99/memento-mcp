@@ -14,7 +14,6 @@
 // response) so they protect every future tool addition automatically.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { spawnSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -27,6 +26,11 @@ type Tool = {
   title?: string;
   description?: string;
   inputSchema?: {
+    type?: string;
+    properties?: Record<string, { description?: string; type?: string | string[] }>;
+    required?: string[];
+  };
+  outputSchema?: {
     type?: string;
     properties?: Record<string, { description?: string; type?: string | string[] }>;
     required?: string[];
@@ -47,24 +51,10 @@ let dbPath = "";
 let tools: Tool[] = [];
 
 beforeAll(async () => {
-  const buildResult = spawnSync(
-    "./node_modules/.bin/tsup",
-    [
-      "src/index.ts",
-      "src/cli/main.ts",
-      "src/hooks/search-context.ts",
-      "src/hooks/session-context.ts",
-      "src/hooks/auto-capture-bin.ts",
-      "src/hooks/session-summarize-bin.ts",
-      "--format", "esm", "--dts", "--clean",
-    ],
-    { cwd: process.cwd(), encoding: "utf-8", timeout: 120_000 },
-  );
-  if (buildResult.status !== 0) {
-    throw new Error(`Build prerequisite failed.\nstderr: ${buildResult.stderr}\nstdout: ${buildResult.stdout}`);
-  }
+  // The MCP server binary is built once by tests/setup/build-once.ts
+  // (registered as vitest globalSetup), so we just check the artifact exists.
   if (!existsSync(distEntry)) {
-    throw new Error(`Built MCP server missing at ${distEntry}`);
+    throw new Error(`Built MCP server missing at ${distEntry} (expected globalSetup to produce it).`);
   }
 
   const fakeHome = join(tmpdir(), `mcp-tdqs-home-${process.pid}-${randomUUID()}`);
@@ -159,9 +149,29 @@ describe("TDQS — Parameter Semantics", () => {
 });
 
 describe("TDQS — Conciseness & Structure", () => {
-  it("descriptions stay under 4 KB (room for guidance, not novellas)", () => {
+  it("descriptions stay under 1.5 KB (room for guidance, not novellas)", () => {
     for (const t of tools) {
-      expect(t.description!.length, `${t.name}: description too long`).toBeLessThan(4_000);
+      expect(t.description!.length, `${t.name}: description too long (${t.description!.length} chars)`).toBeLessThan(1_500);
+    }
+  });
+});
+
+describe("TDQS — Contextual Completeness", () => {
+  it("every tool declares an outputSchema", () => {
+    for (const t of tools) {
+      expect(t.outputSchema, `${t.name}: missing outputSchema`).toBeDefined();
+      expect(t.outputSchema!.properties, `${t.name}: outputSchema has no properties`).toBeDefined();
+      expect(Object.keys(t.outputSchema!.properties!).length, `${t.name}: outputSchema is empty`).toBeGreaterThan(0);
+    }
+  });
+
+  it("every outputSchema property carries a description", () => {
+    for (const t of tools) {
+      const props = t.outputSchema?.properties ?? {};
+      for (const [field, schema] of Object.entries(props)) {
+        expect(schema.description, `${t.name}.outputSchema.${field}: missing description`).toBeTruthy();
+        expect(schema.description!.length, `${t.name}.outputSchema.${field}: description too short`).toBeGreaterThanOrEqual(10);
+      }
     }
   });
 });
