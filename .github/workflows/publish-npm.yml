@@ -23,6 +23,7 @@ jobs:
         with:
           ref: master
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -73,7 +74,7 @@ jobs:
       - name: Create GitHub release
         run: gh release create "v${{ inputs.version }}" --target "${{ steps.commit.outputs.sha }}" --generate-notes --latest
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
 
       - name: Open PR to master and merge
         run: |
@@ -84,4 +85,4 @@ jobs:
             --body "Automated version bump for v${{ inputs.version }}. Already published to npm and tagged."
           gh pr merge "${{ steps.commit.outputs.branch }}" --squash --delete-branch --auto
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
