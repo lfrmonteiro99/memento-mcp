@@ -15,7 +15,7 @@ A local-first MCP server that gives **Claude Code**, **Codex**, **Cursor**, and 
 [![npm version](https://img.shields.io/npm/v/@luispmonteiro/memento-memory-mcp.svg?style=flat-square&color=cb3837&logo=npm&logoColor=white&label=npm)](https://www.npmjs.com/package/@luispmonteiro/memento-memory-mcp)
 [![Tests](https://img.shields.io/github/actions/workflow/status/lfrmonteiro99/memento-mcp/tests.yml?branch=master&style=flat-square&logo=github&label=tests)](https://github.com/lfrmonteiro99/memento-mcp/actions/workflows/tests.yml)
 [![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen?style=flat-square&logo=vitest&logoColor=white)](#testing)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-compatible-7c3aed?style=flat-square)](https://modelcontextprotocol.io)
 [![Local-first](https://img.shields.io/badge/local--first-SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white)](#stay-local-by-default)
@@ -104,7 +104,7 @@ memento-mcp ui
 
 ## Requirements
 
-- **Node.js 18** or newer
+- **Node.js 20** or newer (20.x, 22.x, 24.x — Node 18 is EOL and no longer supported)
 - **npm**
 - An **MCP-compatible client**, such as Claude Code, Codex, Cursor, or another stdio-MCP client
 
@@ -542,7 +542,7 @@ Search and hooks can combine both layers.
 
 ## Testing
 
-`memento-mcp` ships with **1,352 tests across 121 test files**, covering **91% of lines and 85% of branches**. The suite runs on Node 18, 20, and 22 in CI on every push and pull request.
+`memento-mcp` ships with **1,352 tests across 121 test files**, covering **91% of lines and 85% of branches**. The suite runs on Node 20, 22, and 24 in CI on every push and pull request.
 
 ### Run the tests
 
