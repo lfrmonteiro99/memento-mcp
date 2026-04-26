@@ -11,10 +11,10 @@ import { EdgesRepo } from "./db/edges.js";
 import { loadConfig, getDefaultConfigPath, getDefaultDbPath } from "./lib/config.js";
 import { createLogger, logLevelFromEnv } from "./lib/logger.js";
 import { handleMemoryStore } from "./tools/memory-store.js";
-import { handleMemorySearch } from "./tools/memory-search.js";
+import { searchMemories } from "./tools/memory-search.js";
 import { handleMemoryGet } from "./tools/memory-get.js";
 import { handleMemoryTimeline } from "./tools/memory-timeline.js";
-import { handleMemoryList } from "./tools/memory-list.js";
+import { listMemories } from "./tools/memory-list.js";
 import { handleMemoryDelete } from "./tools/memory-delete.js";
 import { handleMemoryDedupCheck } from "./tools/memory-dedup-check.js";
 import { handleDecisionsLog } from "./tools/decisions-log.js";
@@ -26,8 +26,8 @@ import { handleMemoryPin } from "./tools/memory-pin.js";
 import { handleMemoryExport, handleMemoryImport } from "./tools/memory-transfer.js";
 import { handleMemoryLink } from "./tools/memory-link.js";
 import { handleMemoryUnlink } from "./tools/memory-unlink.js";
-import { handleMemoryGraph } from "./tools/memory-graph.js";
-import { handleMemoryPath } from "./tools/memory-path.js";
+import { walkMemoryGraph } from "./tools/memory-graph.js";
+import { findMemoryPath } from "./tools/memory-path.js";
 import { AnalyticsTracker, installFlushOnExit } from "./analytics/tracker.js";
 import { cleanupExpiredAnalytics } from "./analytics/retention.js";
 import { runCompressionCycle } from "./engine/compressor.js";
@@ -169,322 +169,648 @@ function shutdown(): void {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
-const server = new McpServer({ name: "memento-mcp", version: "1.0.0" });
+const server = new McpServer({ name: "memento-mcp", version: "2.1.6" });
 
-server.tool(
+/**
+ * Wraps a string handler result into the shape the MCP SDK expects when an
+ * `outputSchema` is declared. We always return both:
+ *   • `content` (text)            — for clients that render plain text
+ *   • `structuredContent.message` — validated against `outputSchema`
+ * Tools opt into a richer outputSchema by defining their own shape.
+ */
+function textResult(message: string) {
+  return {
+    content: [{ type: "text" as const, text: message }],
+    structuredContent: { message },
+  };
+}
+
+server.registerTool(
   "memory_store",
-  "Persist a typed memory in SQLite, with optional promotion to the Obsidian vault.",
   {
-    title: z.string(),
-    content: z.string(),
-    memory_type: z.string().default("fact"),
-    scope: z.string().default("project"),
-    project_path: z.string().default(""),
-    tags: z.array(z.string()).default([]),
-    importance: z.number().default(0.5),
-    supersedes_id: z.string().default(""),
-    pin: z.boolean().default(false),
-    persist_to_vault: z.boolean().optional(),
-    vault_mode: z.enum(["create", "create_or_update"]).default("create_or_update"),
-    vault_kind: z.string().default(""),
-    vault_folder: z.string().default(""),
-    vault_note_title: z.string().default(""),
-    dedup: z.enum(["strict", "warn", "off"]).optional(),
+    title: "Store a memory",
+    description: [
+      "Persist a fact, decision, lesson, or pattern so it can be recalled later by `memory_search`/`memory_get` or auto-injected into future sessions.",
+      "Use for durable context (decisions, gotchas, preferences, recurring commands). For transient notes or duplicates, prefer `memory_dedup_check` first.",
+      "Writes one SQLite row, queues an embedding (when enabled), and optionally creates/updates an Obsidian vault note. `dedup=\"strict\"` refuses duplicates, `\"warn\"` stores with a warning, `\"off\"` bypasses.",
+    ].join(" "),
+    inputSchema: {
+      title: z.string().min(1).describe("Short human-readable title (1 line). Used as the search label and as the vault note filename when promoted."),
+      content: z.string().min(1).describe("The memory body in markdown. Wrap sensitive substrings in `<private>...</private>` tags to redact them from default reads."),
+      memory_type: z.string().default("fact").describe("Category tag: `fact`, `decision`, `lesson`, `pattern`, `preference`, `command`, etc. Drives auto-promotion and importance defaults via project policy."),
+      scope: z.string().default("project").describe("Visibility scope: `project` (default, scoped to the project at `project_path`), `global` (all projects), or `team` (synced via git when sync is enabled)."),
+      project_path: z.string().default("").describe("Absolute filesystem path of the project this memory belongs to. Empty string defaults to the server's current working directory."),
+      tags: z.array(z.string()).default([]).describe("Free-form tag list, e.g. `[\"auth\", \"oauth2\"]`. Project policies may require certain tags or ban others."),
+      importance: z.number().min(0).max(1).default(0.5).describe("Importance score in [0, 1]. Higher values rank earlier in search and survive pruning longer. Default 0.5."),
+      supersedes_id: z.string().default("").describe("Optional id of an older memory that this one replaces. The older memory is marked superseded and de-prioritised in search."),
+      pin: z.boolean().default(false).describe("If true, pin the memory so it is exempt from automatic pruning and ranks higher."),
+      persist_to_vault: z.boolean().optional().describe("If true, also write an Obsidian vault note. If omitted, the project's policy decides based on `memory_type`."),
+      vault_mode: z.enum(["create", "create_or_update"]).default("create_or_update").describe("`create` fails if the note exists; `create_or_update` (default) overwrites an existing note with the same title."),
+      vault_kind: z.string().default("").describe("Optional vault subtype (e.g. `architecture`, `runbook`) used to pick a folder per `vault.kindFolders` config."),
+      vault_folder: z.string().default("").describe("Optional explicit vault subfolder, relative to the vault root. Overrides `vault_kind` routing."),
+      vault_note_title: z.string().default("").describe("Optional override for the vault note title. Defaults to `title` when empty."),
+      dedup: z.enum(["strict", "warn", "off"]).optional().describe("Per-call override for duplicate handling. Defaults to the server's `search.embeddings.dedupDefaultMode` when omitted."),
+    },
+    annotations: {
+      title: "Store a memory",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      message: z.string().describe("On success: `Memory stored with ID: <id>` (optionally followed by a vault-note path or a dedup `⚠` warning). On rejection: `Memory not stored: <reason>` explaining policy/dedup failure."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryStore(memRepo, params, db, config, embRepo) }],
-  })
+  async (params) => textResult(await handleMemoryStore(memRepo, params, db, config, embRepo))
 );
 
-server.tool(
+server.registerTool(
   "memory_search",
-  [
-    "Search memories with progressive disclosure.",
-    "Layer 1 (cheapest): detail='index' — titles + scores, ~30t per result. Start here.",
-    "Layer 2: detail='summary' — preview body, ~80t per result. Use to shortlist.",
-    "Layer 3: detail='full' — full body, ~150-300t per result. Use sparingly.",
-    "For chronological context around one hit, prefer memory_timeline(id) — ~200t per neighbor.",
-    "For one full body, prefer memory_get(id) — ~300-800t."
-  ].join(" "),
   {
-    query: z.string(),
-    project_path: z.string().default(""),
-    memory_type: z.string().default(""),
-    limit: z.number().default(10),
-    detail: z.enum(["index", "summary", "full"]).default("index"),
-    include_file_memories: z.boolean().default(true),
+    title: "Search memories",
+    description: [
+      "Ranked full-text + decay-weighted search across SQLite, file-memory sources, and (when configured) the Obsidian vault. Read-only.",
+      "Use the three-layer progressive-disclosure pattern: `detail=\"index\"` (~30 tok/result, start here), `\"summary\"` (~80 tok), `\"full\"` (~150-300 tok, use sparingly).",
+      "Follow-ups: `memory_timeline(id)` for chronological neighbours of one hit, `memory_get(id)` for one full body, `memory_graph(id)` to explore typed edges.",
+    ].join(" "),
+    inputSchema: {
+      query: z.string().min(1).describe("Free-text query. Tokenised by FTS5; phrases match individual terms. Examples: `\"oauth refresh\"`, `\"why we picked postgres\"`."),
+      project_path: z.string().default("").describe("Optional absolute project path to scope results. Empty string searches across all projects (subject to scope rules)."),
+      memory_type: z.string().default("").describe("Optional type filter, e.g. `decision`, `lesson`. Empty string returns all types."),
+      limit: z.number().int().min(1).max(50).default(10).describe("Maximum number of results to return (1-50). Default 10."),
+      detail: z.enum(["index", "summary", "full"]).default("index").describe("Disclosure level — `index` (cheapest), `summary`, or `full`. Always start at `index` and escalate only if needed."),
+      include_file_memories: z.boolean().default(true).describe("If true (default), also search markdown memory files registered as sources. Set false to limit to SQLite + vault."),
+    },
+    annotations: {
+      title: "Search memories",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      query: z.string().describe("Echo of the query that was executed."),
+      detail: z.enum(["index", "summary", "full"]).describe("Disclosure level used to render this result set."),
+      count: z.number().int().nonnegative().describe("Number of SQLite/file results returned (after `limit` is applied)."),
+      results: z.array(z.object({
+        id: z.string().describe("Memory id, e.g. `mem_01HXYZ...`."),
+        title: z.string().describe("Memory title."),
+        score: z.number().describe("Decay-weighted relevance score in [0, 1] (higher = more relevant)."),
+        source: z.enum(["sqlite", "file"]).describe("Whether the hit came from SQLite or a registered markdown file source."),
+        memory_type: z.string().optional().describe("Memory type when known (e.g. `fact`, `decision`)."),
+        body: z.string().optional().describe("Body preview — only present when `detail=\"summary\"` or `\"full\"`."),
+      })).describe("Ranked SQLite/file hits."),
+      vault_results: z.array(z.object({
+        relativePath: z.string().describe("Path of the vault note relative to the vault root."),
+        title: z.string().optional().describe("Vault note title, when available."),
+      })).describe("Obsidian vault matches (separate from SQLite results). Always an array — empty when the vault is disabled or has no matches."),
+      total_tokens: z.number().int().nonnegative().describe("Estimated token cost of the rendered text payload."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemorySearch(memRepo, config, params, db, analyticsTracker) }],
-  })
+  async (params) => {
+    const { text, structured } = await searchMemories(memRepo, config, params, db, analyticsTracker);
+    return { content: [{ type: "text" as const, text }], structuredContent: structured };
+  }
 );
 
-server.tool(
+server.registerTool(
   "memory_get",
-  "Fetch the full body of a single memory by id (~300-800 tokens). Prefer memory_search first to find the right id. Set reveal_private=true to see content inside <private> tags (emits an audit event).",
   {
-    memory_id: z.string(),
-    reveal_private: z.boolean().default(false),
+    title: "Get full memory by id",
+    description: [
+      "Fetch the full body, tags, and metadata of one memory by id (~300-800 tokens). Read-only.",
+      "Use after `memory_search(detail=\"index\")` to expand a single hit. Substrings inside `<private>` tags are redacted unless `reveal_private=true` (which emits an audit event).",
+      "Returns `not found` if the id does not exist or has been soft-deleted.",
+    ].join(" "),
+    inputSchema: {
+      memory_id: z.string().min(1).describe("The memory id, as returned by `memory_store` or shown in `memory_search` results (e.g. `mem_01HXYZ...`)."),
+      reveal_private: z.boolean().default(false).describe("If true, include content inside `<private>` tags. Use only when explicitly necessary — emits an audit event."),
+    },
+    annotations: {
+      title: "Get full memory by id",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      message: z.string().describe("Full memory rendered as markdown (title, metadata, body). Returns `Memory <id> not found.` when missing."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryGet(memRepo, db, config, params) }],
-  })
+  async (params) => textResult(await handleMemoryGet(memRepo, db, config, params))
 );
 
-server.tool(
+server.registerTool(
   "memory_timeline",
-  [
-    "Return memories created around a given memory id (chronological neighborhood).",
-    "Cost: ~200 tokens per neighbor.",
-    "Use after memory_search(detail='index') when you need work-session context for one specific hit.",
-    "Cheaper than calling memory_get on each neighbor individually."
-  ].join(" "),
   {
-    id: z.string(),
-    window: z.number().int().min(1).max(10).default(3),
-    detail: z.enum(["index", "summary"]).default("summary"),
-    same_session_only: z.boolean().default(true),
+    title: "List memories around an id (chronological)",
+    description: [
+      "Return the chronological neighbourhood of memories around an anchor id (~200 tok/neighbour). Read-only.",
+      "Use after `memory_search(detail=\"index\")` to recover work-session context for one hit. Cheaper than calling `memory_get` on each neighbour individually.",
+    ].join(" "),
+    inputSchema: {
+      id: z.string().min(1).describe("The anchor memory id to centre the window on. Get this from `memory_search` or `memory_store`."),
+      window: z.number().int().min(1).max(10).default(3).describe("Number of neighbours to return on each side (1-10). Default 3 → up to 6 neighbours total."),
+      detail: z.enum(["index", "summary"]).default("summary").describe("Disclosure level — `index` (titles only) or `summary` (titles + short preview, default). `full` is intentionally not offered here; use `memory_get` for that."),
+      same_session_only: z.boolean().default(true).describe("If true (default), only include neighbours captured in the same session as the anchor. Set false to span sessions."),
+    },
+    annotations: {
+      title: "List memories around an id (chronological)",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      message: z.string().describe("Markdown list of neighbour memories (anchor + window on each side) at the requested `detail` level. Returns `Memory <id> not found.` when the anchor is missing."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryTimeline(memRepo, params) }],
-  })
+  async (params) => textResult(await handleMemoryTimeline(memRepo, params))
 );
 
-server.tool(
+server.registerTool(
   "memory_dedup_check",
-  [
-    "Check if content is a near-duplicate of existing memories before storing.",
-    "Returns up to N matches above the cosine similarity threshold.",
-    "~50 tokens per result. Cheap pre-flight before memory_store.",
-    "If embeddings are disabled, returns a clear no-op message."
-  ].join(" "),
   {
-    content: z.string(),
-    title: z.string().optional(),
-    project_path: z.string().optional(),
-    threshold: z.number().min(0).max(1).optional(),
-    limit: z.number().int().min(1).max(20).default(5),
+    title: "Check for near-duplicate memories",
+    description: [
+      "Cheap pre-flight (~50 tok/match): \"would storing this content duplicate something I already have?\" Read-only.",
+      "Use before `memory_store` when overlap is likely, or before bulk imports. Returns up to `limit` existing memories with cosine similarity above the threshold (highest first).",
+      "Computing the candidate embedding may make an outbound call to the configured provider (OpenAI, Ollama, etc.). If embeddings are disabled, returns a clear no-op message rather than silently passing.",
+    ].join(" "),
+    inputSchema: {
+      content: z.string().min(1).describe("Candidate memory body to check, exactly as you would pass to `memory_store`."),
+      title: z.string().optional().describe("Optional candidate title; concatenated with `content` to match how `memory_store` builds its embedding."),
+      project_path: z.string().optional().describe("Optional absolute project path to scope the search to a single project's memories."),
+      threshold: z.number().min(0).max(1).optional().describe("Cosine similarity threshold in [0, 1]. Defaults to `search.embeddings.dedupThreshold` from config (typically ~0.85)."),
+      limit: z.number().int().min(1).max(20).default(5).describe("Maximum number of matches to return (1-20). Default 5."),
+    },
+    annotations: {
+      title: "Check for near-duplicate memories",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    outputSchema: {
+      message: z.string().describe("Markdown list of near-duplicate matches with similarity scores, or `No near-duplicates found above threshold.` Returns a no-op message when embeddings are disabled in config."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryDedupCheck(db, memRepo, embRepo, dedupProvider, config, params) }]
-  })
+  async (params) => textResult(await handleMemoryDedupCheck(db, memRepo, embRepo, dedupProvider, config, params))
 );
 
-server.tool(
+server.registerTool(
   "memory_list",
-  "List memories with optional filters.",
   {
-    project_path: z.string().default(""),
-    memory_type: z.string().default(""),
-    scope: z.string().default(""),
-    pinned_only: z.boolean().default(false),
-    limit: z.number().default(20),
-    detail: z.enum(["index", "summary", "full"]).default("full"),
-    include_file_memories: z.boolean().default(false),
-    vault_kind: z.string().default(""),
-    vault_folder: z.string().default(""),
+    title: "List memories (no query)",
+    description: [
+      "Browse stored memories with optional filters — ordered by recency/importance. Read-only.",
+      "Use to enumerate by type/scope/project. Prefer `memory_search` whenever you have keywords (relevance ranking). Use the same `detail` levels to control token cost.",
+    ].join(" "),
+    inputSchema: {
+      project_path: z.string().default("").describe("Optional absolute project path filter. Empty string lists across all projects."),
+      memory_type: z.string().default("").describe("Optional type filter (e.g. `decision`). Empty string returns all types."),
+      scope: z.string().default("").describe("Optional scope filter — `project`, `global`, or `team`. Empty string returns all scopes."),
+      pinned_only: z.boolean().default(false).describe("If true, only return pinned memories."),
+      limit: z.number().int().min(1).max(200).default(20).describe("Maximum number of memories to return (1-200). Default 20."),
+      detail: z.enum(["index", "summary", "full"]).default("full").describe("Disclosure level — `index` (cheapest), `summary`, or `full` (default). Drop to `index` when listing many rows to keep token cost down."),
+      include_file_memories: z.boolean().default(false).describe("If true, also include markdown file-memory sources. Off by default since lists are usually about SQLite-backed memories."),
+      vault_kind: z.string().default("").describe("Optional vault subtype filter when listing vault notes."),
+      vault_folder: z.string().default("").describe("Optional vault subfolder filter (relative to vault root)."),
+    },
+    annotations: {
+      title: "List memories (no query)",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      detail: z.enum(["index", "summary", "full"]).describe("Disclosure level used to render this list."),
+      count: z.number().int().nonnegative().describe("Number of SQLite/file memories returned."),
+      memories: z.array(z.object({
+        id: z.string().describe("Memory id."),
+        title: z.string().describe("Memory title."),
+        source: z.enum(["sqlite", "file"]).describe("Whether the row came from SQLite or a registered markdown file source."),
+        memory_type: z.string().optional().describe("Memory type (e.g. `fact`, `decision`)."),
+        importance: z.number().optional().describe("Importance score in [0, 1] when known."),
+        pinned: z.boolean().optional().describe("Pinned flag when known."),
+        body: z.string().optional().describe("Body preview — only present when `detail=\"summary\"` or `\"full\"`."),
+      })).describe("Listed memories ordered by recency/importance."),
+      vault_results: z.array(z.object({
+        id: z.string().describe("Vault note id."),
+        title: z.string().describe("Vault note title."),
+        relativePath: z.string().describe("Path relative to the vault root."),
+        kind: z.string().optional().describe("Vault subtype (e.g. `architecture`, `runbook`) when classified."),
+      })).describe("Obsidian vault matches when the vault is enabled and `vault_kind`/`vault_folder` filters apply. Empty otherwise."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryList(memRepo, config, params, db) }],
-  })
+  async (params) => {
+    const { text, structured } = await listMemories(memRepo, config, params, db);
+    return { content: [{ type: "text" as const, text }], structuredContent: structured };
+  }
 );
 
-server.tool(
+server.registerTool(
   "memory_delete",
-  "Soft-delete a memory by ID.",
   {
-    memory_id: z.string(),
+    title: "Delete a memory (soft)",
+    description: [
+      "Soft-delete a memory by id — the row is hidden from search/list/get but retained for audit. Idempotent.",
+      "Use for accidental or obsolete memories. To replace one with a corrected version, prefer `memory_store(supersedes_id=...)` so history is linked.",
+    ].join(" "),
+    inputSchema: {
+      memory_id: z.string().min(1).describe("Id of the memory to soft-delete (e.g. `mem_01HXYZ...`)."),
+    },
+    annotations: {
+      title: "Delete a memory (soft)",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      message: z.string().describe("`Memory <id> deleted.` on success, `Memory <id> not found.` when the id is missing."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryDelete(memRepo, params) }],
-  })
+  async (params) => textResult(await handleMemoryDelete(memRepo, params))
 );
 
-server.tool(
+server.registerTool(
   "decisions_log",
-  "Store, list, or search architectural decisions.",
   {
-    action: z.string(),
-    project_path: z.string(),
-    title: z.string().default(""),
-    body: z.string().default(""),
-    category: z.string().default("general"),
-    importance: z.number().default(0.7),
-    supersedes_id: z.string().default(""),
-    query: z.string().default(""),
-    limit: z.number().default(10),
+    title: "Architectural decision log",
+    description: [
+      "Multi-action ADR log. Pick one via `action`:",
+      "  • `store` — record a new decision (`title` + `body` required; `supersedes_id` optional). Writes a row.",
+      "  • `list` — list recent decisions (read-only).",
+      "  • `search` — FTS over decisions (`query` required, read-only).",
+      "Decisions outrank free-form memories by default and survive pruning longer. Use `pitfalls_log` for recurring problems.",
+    ].join(" "),
+    inputSchema: {
+      action: z.enum(["store", "list", "search"]).describe("Which sub-operation to perform: `store`, `list`, or `search`."),
+      project_path: z.string().describe("Absolute project path the decision belongs to (or to scope `list`/`search`). Required."),
+      title: z.string().default("").describe("Decision title (required for `store`, ignored otherwise). One short line — e.g. `\"Use Postgres over MySQL\"`."),
+      body: z.string().default("").describe("Decision body in markdown (required for `store`). Should explain context, options considered, and rationale."),
+      category: z.string().default("general").describe("Free-form category tag for filtering, e.g. `architecture`, `infra`, `process`. Default `general`."),
+      importance: z.number().min(0).max(1).default(0.7).describe("Importance score in [0, 1] for `store`. Default 0.7 — decisions outrank typical facts (0.5)."),
+      supersedes_id: z.string().default("").describe("For `store`: optional id of an earlier decision this one replaces. The older decision is marked superseded."),
+      query: z.string().default("").describe("Search text (required for `action=\"search\"`). Tokenised by FTS5."),
+      limit: z.number().int().min(1).max(50).default(10).describe("Maximum rows to return for `list`/`search` (1-50). Default 10."),
+    },
+    annotations: {
+      title: "Architectural decision log",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      message: z.string().describe("For `store`: `Decision stored with ID: <id>`. For `list`/`search`: markdown bullet list of decisions or `No decisions found.` Returns `Invalid action: ...` when `action` is unsupported."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleDecisionsLog(decRepo, params) }],
-  })
+  async (params) => textResult(await handleDecisionsLog(decRepo, params))
 );
 
-server.tool(
+server.registerTool(
   "pitfalls_log",
-  "Track recurring problems and their resolutions.",
   {
-    action: z.string(),
-    project_path: z.string(),
-    title: z.string().default(""),
-    body: z.string().default(""),
-    importance: z.number().default(0.6),
-    limit: z.number().default(10),
-    include_resolved: z.boolean().default(false),
-    pitfall_id: z.string().default(""),
+    title: "Recurring pitfalls log",
+    description: [
+      "Multi-action log of recurring problems and their resolutions. Pick one via `action`:",
+      "  • `store` — record a new pitfall (`title` + `body` required). Writes a row.",
+      "  • `list` — list open pitfalls (set `include_resolved=true` for all). Read-only.",
+      "  • `resolve` — mark a pitfall resolved (`pitfall_id` required).",
+      "Use when something keeps biting and you want a queryable problem→resolution log. For one-off design choices, use `decisions_log`.",
+    ].join(" "),
+    inputSchema: {
+      action: z.enum(["store", "list", "resolve"]).describe("Which sub-operation to perform: `store`, `list`, or `resolve`."),
+      project_path: z.string().describe("Absolute project path the pitfall belongs to (or to scope `list`). Required."),
+      title: z.string().default("").describe("Short symptom title (required for `store`). E.g. `\"esbuild fails on M1 when using esm + node-gyp\"`."),
+      body: z.string().default("").describe("Markdown body (required for `store`). Should describe the problem and the resolution / workaround."),
+      importance: z.number().min(0).max(1).default(0.6).describe("Importance score in [0, 1] for `store`. Default 0.6."),
+      limit: z.number().int().min(1).max(50).default(10).describe("Maximum pitfalls to return for `list` (1-50). Default 10."),
+      include_resolved: z.boolean().default(false).describe("For `list`: if true, also include resolved pitfalls. Default false (open only)."),
+      pitfall_id: z.string().default("").describe("Required for `action=\"resolve\"` — the id of the pitfall to mark resolved."),
+    },
+    annotations: {
+      title: "Recurring pitfalls log",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      message: z.string().describe("For `store`: `Pitfall logged/updated with ID: <id>`. For `list`: markdown list with `[RESOLVED]` or `[xN]` (occurrence count) prefixes, or `No pitfalls found.` For `resolve`: `Pitfall <id> marked as resolved.` or `Pitfall <id> not found.`"),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handlePitfallsLog(pitRepo, params) }],
-  })
+  async (params) => textResult(await handlePitfallsLog(pitRepo, params))
 );
 
-server.tool(
+server.registerTool(
   "memory_analytics",
-  "View memory effectiveness: utility rates, token costs, auto-capture stats, prune suggestions.",
   {
-    period: z.enum(["last_24h", "last_7d", "last_30d", "all"]).default("last_7d"),
-    section: z.enum(["all", "injections", "captures", "compression", "memories"]).default("all"),
-    project_path: z.string().default(""),
+    title: "Memory effectiveness analytics",
+    description: [
+      "Reports utility rates of injected memories, token costs per search layer, auto-capture stats, compression activity, and prune suggestions. Read-only.",
+      "Use to tune importance thresholds, find dead memories worth pruning, and verify that auto-capture/compression are earning their keep. Returns a no-op message when analytics are disabled.",
+    ].join(" "),
+    inputSchema: {
+      period: z.enum(["last_24h", "last_7d", "last_30d", "all"]).default("last_7d").describe("Time window to summarise. `all` covers the full retention period configured in `analytics.retentionDays`."),
+      section: z.enum(["all", "injections", "captures", "compression", "memories"]).default("all").describe("Which sub-report to render — `injections` (utility), `captures` (auto-capture), `compression`, `memories` (prune suggestions), or `all` (default)."),
+      project_path: z.string().default("").describe("Optional absolute project path to scope the report. Empty string aggregates across all projects."),
+    },
+    annotations: {
+      title: "Memory effectiveness analytics",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      message: z.string().describe("Markdown report grouped by `section` (`injections` / `captures` / `compression` / `memories`) with totals, percentages, and prune candidates. Returns a no-op message when analytics are disabled in config."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryAnalytics(db, params) }],
-  })
+  async (params) => textResult(await handleMemoryAnalytics(db, params))
 );
 
-server.tool(
+server.registerTool(
   "memory_update",
-  "Edit an existing memory in place (title, content, tags, importance, memory_type, pinned).",
   {
-    memory_id: z.string(),
-    title: z.string().optional(),
-    content: z.string().optional(),
-    tags: z.array(z.string()).optional(),
-    importance: z.number().optional(),
-    memory_type: z.string().optional(),
-    pinned: z.boolean().optional(),
-    dedup: z.enum(["strict", "warn", "off"]).optional(),
+    title: "Update a memory in place",
+    description: [
+      "Edit a memory in place — only the fields you pass are changed. Editable: `title`, `content`, `tags`, `importance`, `memory_type`, `pinned`.",
+      "Use for typo fixes, retagging, importance tuning. For meaningful changes you'd want history for (e.g. a reversed decision), prefer `memory_store(supersedes_id=...)` instead.",
+      "Side effect: when `content` changes, the embedding is re-queued and dedup may run. Returns `not found` for missing ids.",
+    ].join(" "),
+    inputSchema: {
+      memory_id: z.string().min(1).describe("Id of the memory to update (e.g. `mem_01HXYZ...`)."),
+      title: z.string().optional().describe("New title (single line). Omit to leave unchanged."),
+      content: z.string().optional().describe("New body in markdown. Omit to leave unchanged. When changed, the embedding is re-computed asynchronously."),
+      tags: z.array(z.string()).optional().describe("Replacement tag list. Omit to leave unchanged. Pass `[]` to clear all tags."),
+      importance: z.number().min(0).max(1).optional().describe("New importance score in [0, 1]. Omit to leave unchanged."),
+      memory_type: z.string().optional().describe("New memory_type (e.g. `fact`, `decision`). Omit to leave unchanged."),
+      pinned: z.boolean().optional().describe("New pinned state. Omit to leave unchanged. Equivalent to calling `memory_pin` separately."),
+      dedup: z.enum(["strict", "warn", "off"]).optional().describe("Per-call override for duplicate handling when `content` changes. Mirrors `memory_store.dedup`."),
+    },
+    annotations: {
+      title: "Update a memory in place",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      message: z.string().describe("`Memory <id> updated.` on success, `Memory <id> not found.` when missing, or a dedup-rejection sentence when `dedup=\"strict\"` blocks the change."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryUpdate(memRepo, params, config, embRepo) }],
-  })
+  async (params) => textResult(await handleMemoryUpdate(memRepo, params, config, embRepo))
 );
 
-server.tool(
+server.registerTool(
   "memory_pin",
-  "Pin or unpin a memory so it survives pruning and ranks higher.",
   {
-    memory_id: z.string(),
-    pinned: z.boolean().default(true),
+    title: "Pin or unpin a memory",
+    description: [
+      "Toggle the pinned flag — pinned memories survive pruning and rank higher in search. Idempotent.",
+      "Use sparingly: reserve pins for canonical decisions, user preferences, and high-leverage facts. Pinning everything defeats the purpose.",
+    ].join(" "),
+    inputSchema: {
+      memory_id: z.string().min(1).describe("Id of the memory to pin or unpin."),
+      pinned: z.boolean().default(true).describe("`true` (default) to pin, `false` to unpin."),
+    },
+    annotations: {
+      title: "Pin or unpin a memory",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      message: z.string().describe("`Memory <id> pinned.` / `Memory <id> unpinned.` on success, `Memory <id> not found.` when missing."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryPin(memRepo, params) }],
-  })
+  async (params) => textResult(await handleMemoryPin(memRepo, params))
 );
 
-server.tool(
+server.registerTool(
   "memory_compress",
-  "Run the compression pipeline now (cluster similar memories and merge them). Omit project_path to compress all projects.",
   {
-    project_path: z.string().default(""),
+    title: "Run the compression pipeline now",
+    description: [
+      "Force one compression cycle now: cluster similar memories by embedding similarity, merge each cluster into a canonical memory, and mark originals as compressed.",
+      "Use after a bulk import or to sanity-check compression. Compression normally runs on the maintenance schedule.",
+      "Side effects: writes merged memories, updates originals' `compressed_into` pointer, may call embeddings + LLM providers. Requires `compression.enabled=true`; otherwise returns a no-op message.",
+    ].join(" "),
+    inputSchema: {
+      project_path: z.string().default("").describe("Absolute project path to compress. Empty string (default) compresses every project."),
+    },
+    annotations: {
+      title: "Run the compression pipeline now",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    outputSchema: {
+      message: z.string().describe("Summary line per project, e.g. `Compressed 3 cluster(s) in project <id>`, or `No clusters to compress.` Returns a no-op message when `compression.enabled=false`."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryCompress(db, config, params) }],
-  })
+  async (params) => textResult(await handleMemoryCompress(db, config, params))
 );
 
-server.tool(
+server.registerTool(
   "memory_export",
-  "Export memories/decisions/pitfalls as portable JSON. Omit project_path to export everything.",
   {
-    project_path: z.string().default(""),
+    title: "Export memories as JSON",
+    description: [
+      "Export memories, decisions, and pitfalls as a portable JSON document. Read-only.",
+      "Use before destructive maintenance (bulk delete, schema migration) so you have a clean restore point, or to transfer state to another memento-mcp instance via `memory_import`. Includes scope, tags, importance, and supersession links so round-trip preserves structure.",
+    ].join(" "),
+    inputSchema: {
+      project_path: z.string().default("").describe("Absolute project path to export. Empty string (default) exports memories across all projects."),
+    },
+    annotations: {
+      title: "Export memories as JSON",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      message: z.string().describe("JSON document (as a string) containing `memories`, `decisions`, and `pitfalls` arrays plus a `meta` object with export timestamp and scope."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryExport(db, params) }],
-  })
+  async (params) => textResult(await handleMemoryExport(db, params))
 );
 
-server.tool(
+server.registerTool(
   "memory_import",
-  "Import memories from a JSON file produced by memory_export. Strategy 'skip' (default) keeps existing rows; 'overwrite' replaces them.",
   {
-    path: z.string(),
-    strategy: z.enum(["skip", "overwrite"]).default("skip"),
+    title: "Import memories from JSON",
+    description: [
+      "Import memories, decisions, and pitfalls from a JSON file produced by `memory_export` (server-local path, not a URL).",
+      "Conflict handling via `strategy`: `skip` (default, safe to re-run) keeps existing rows on id collision; `overwrite` replaces them — use for authoritative restores.",
+      "Side effects: inserts/updates rows in `memories`, `decisions`, `pitfalls`. Embeddings are queued asynchronously.",
+    ].join(" "),
+    inputSchema: {
+      path: z.string().min(1).describe("Absolute path on the server's filesystem to a JSON file produced by `memory_export` (e.g. `/tmp/memento-backup.json`)."),
+      strategy: z.enum(["skip", "overwrite"]).default("skip").describe("`skip` (default) preserves existing rows on id collision; `overwrite` replaces them."),
+    },
+    annotations: {
+      title: "Import memories from JSON",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      message: z.string().describe("Summary line with counts of rows inserted / updated / skipped per table (memories, decisions, pitfalls)."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryImport(db, params) }],
-  })
+  async (params) => textResult(await handleMemoryImport(db, params))
 );
 
 const edgeTypeEnum = z.enum(["relates_to", "supersedes", "caused_by", "mitigated_by", "references", "implements"]);
 
-server.tool(
+server.registerTool(
   "memory_link",
-  [
-    "Create a typed edge between two memories. Edge types: relates_to | supersedes | caused_by | mitigated_by | references | implements.",
-    "Use memory_search first to find the ids, then memory_link to connect them.",
-    "Optional weight (0-1) signals edge strength (default 1.0).",
-    "Re-linking an existing (from,to,type) triple updates its weight.",
-  ].join(" "),
   {
-    from_id: z.string(),
-    to_id: z.string(),
-    edge_type: edgeTypeEnum,
-    weight: z.number().min(0).max(1).default(1.0),
+    title: "Link two memories with a typed edge",
+    description: [
+      "Create a typed directed edge between two memories. Edge types: `relates_to`, `supersedes`, `caused_by`, `mitigated_by`, `references`, `implements`.",
+      "Use after `memory_search` to map dependencies, cause/effect, supersession chains, or references. Re-linking the same `(from_id, to_id, edge_type)` triple updates the weight (idempotent).",
+    ].join(" "),
+    inputSchema: {
+      from_id: z.string().min(1).describe("Source memory id (the edge points outward from this memory)."),
+      to_id: z.string().min(1).describe("Target memory id."),
+      edge_type: edgeTypeEnum.describe("Relationship type. `supersedes` is the same notion used by `memory_store.supersedes_id`."),
+      weight: z.number().min(0).max(1).default(1.0).describe("Edge strength in [0, 1]. Default 1.0. Lower values can be used to weaken weak \"relates_to\" hints."),
+    },
+    annotations: {
+      title: "Link two memories with a typed edge",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      message: z.string().describe("`Edge created/updated: <from> -[<edge_type>:<weight>]-> <to>` on success, or `Memory <id> not found.` when either endpoint is missing."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryLink(memRepo, edgesRepo, params) }],
-  })
+  async (params) => textResult(await handleMemoryLink(memRepo, edgesRepo, params))
 );
 
-server.tool(
+server.registerTool(
   "memory_unlink",
-  "Remove a typed edge between two memories. Provide the same from_id, to_id, and edge_type used when the edge was created.",
   {
-    from_id: z.string(),
-    to_id: z.string(),
-    edge_type: edgeTypeEnum,
+    title: "Remove an edge between two memories",
+    description: [
+      "Remove a previously created edge — pass the exact `(from_id, to_id, edge_type)` triple used at creation time. No wildcards. Idempotent.",
+      "Use to retract incorrect links. To retract a whole memory, prefer `memory_delete` (keeps audit trail).",
+    ].join(" "),
+    inputSchema: {
+      from_id: z.string().min(1).describe("Source memory id of the edge to remove."),
+      to_id: z.string().min(1).describe("Target memory id of the edge to remove."),
+      edge_type: edgeTypeEnum.describe("Edge type that was used when the edge was created. Must match exactly."),
+    },
+    annotations: {
+      title: "Remove an edge between two memories",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      message: z.string().describe("`Edge removed: <from> -[<edge_type>]-> <to>` on success, or `Edge not found.` when the triple does not exist."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryUnlink(edgesRepo, params) }],
-  })
+  async (params) => textResult(await handleMemoryUnlink(edgesRepo, params))
 );
 
-server.tool(
+server.registerTool(
   "memory_graph",
-  [
-    "Explore the knowledge graph around a memory (BFS up to depth hops).",
-    "Returns neighbour nodes with typed edges. Edge types: relates_to | supersedes | caused_by | mitigated_by | references | implements.",
-    "Chain: memory_search → memory_graph to map related concepts.",
-    "direction='out' follows outgoing edges only; 'in' follows incoming; 'both' (default) follows all.",
-    "Depth 0 returns just the root node; max depth is 5.",
-  ].join(" "),
   {
-    id: z.string(),
-    depth: z.number().int().min(0).max(5).default(2),
-    edge_types: z.array(edgeTypeEnum).optional(),
-    direction: z.enum(["out", "in", "both"]).default("both"),
+    title: "Explore the knowledge graph around a memory",
+    description: [
+      "BFS walk from one memory id outward, returning neighbour nodes + typed edges. Read-only.",
+      "Use after `memory_search` to map related concepts, supersession chains, or the cluster around a decision. `direction` controls edge polarity (`out`/`in`/`both`); depth is capped at 5.",
+    ].join(" "),
+    inputSchema: {
+      id: z.string().min(1).describe("Memory id to use as the root of the BFS walk."),
+      depth: z.number().int().min(0).max(5).default(2).describe("How many hops to traverse from the root (0-5). Default 2."),
+      edge_types: z.array(edgeTypeEnum).optional().describe("Optional whitelist of edge types to follow. Omit to follow all types."),
+      direction: z.enum(["out", "in", "both"]).default("both").describe("`out` follows outgoing edges only, `in` incoming only, `both` (default) follows all."),
+    },
+    annotations: {
+      title: "Explore the knowledge graph around a memory",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      found: z.boolean().describe("`true` when the root memory exists. `false` when the id was not found (in which case `root` and `edges` are absent/empty)."),
+      root: z.object({
+        id: z.string().describe("Root memory id."),
+        title: z.string().describe("Root memory title."),
+        memory_type: z.string().describe("Root memory type."),
+      }).optional().describe("Root node metadata; absent when `found=false`."),
+      edges: z.array(z.object({
+        direction: z.enum(["out", "in"]).describe("`out` when the edge points away from the root, `in` when it points toward it."),
+        edge_type: edgeTypeEnum.describe("Typed relationship along this edge."),
+        weight: z.number().optional().describe("Edge strength in [0, 1] when stored."),
+        other: z.object({
+          id: z.string().describe("Far-end memory id."),
+          title: z.string().describe("Far-end memory title (or the id when the memory was deleted)."),
+          memory_type: z.string().describe("Far-end memory type, or `unknown` if the row is missing."),
+        }).describe("The neighbour node on the other side of this edge."),
+        token_cost: z.number().int().nonnegative().describe("Estimated token cost of rendering this edge in the text output."),
+      })).describe("Edges discovered by the BFS walk, sorted by edge_type then by neighbour id."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryGraph(memRepo, edgesRepo, params) }],
-  })
+  async (params) => {
+    const { text, structured } = await walkMemoryGraph(memRepo, edgesRepo, params);
+    return { content: [{ type: "text" as const, text }], structuredContent: structured };
+  }
 );
 
-server.tool(
+server.registerTool(
   "memory_path",
-  [
-    "Find the shortest path between two memories in the knowledge graph.",
-    "Returns the chain of memory ids and edge types connecting from_id to to_id.",
-    "Chain: memory_search → memory_path to trace cause-effect or dependency chains.",
-    "max_hops limits BFS depth (default 4, max 10).",
-  ].join(" "),
   {
-    from_id: z.string(),
-    to_id: z.string(),
-    max_hops: z.number().int().min(1).max(10).default(4),
-    edge_types: z.array(edgeTypeEnum).optional(),
+    title: "Shortest path between two memories",
+    description: [
+      "BFS shortest path between two memories — returns the chain of ids + edge types, or a `no path` message when unreachable within `max_hops`. Read-only.",
+      "Use after `memory_search` (with both endpoints known) to trace cause-effect chains, supersession history, or dependency lineage.",
+    ].join(" "),
+    inputSchema: {
+      from_id: z.string().min(1).describe("Starting memory id."),
+      to_id: z.string().min(1).describe("Destination memory id."),
+      max_hops: z.number().int().min(1).max(10).default(4).describe("Maximum BFS depth (1-10). Default 4. Returns `no path` if the destination is further than `max_hops` from the start."),
+      edge_types: z.array(edgeTypeEnum).optional().describe("Optional whitelist of edge types to follow. Omit to allow all types."),
+    },
+    annotations: {
+      title: "Shortest path between two memories",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    outputSchema: {
+      found: z.boolean().describe("`true` when a path exists within `max_hops`; `false` otherwise (in which case `path` is empty and `message` carries the reason)."),
+      hops: z.number().int().nonnegative().describe("Number of edges in the path. 0 when `from_id === to_id`."),
+      path: z.array(z.object({
+        id: z.string().describe("Memory id of this node along the path."),
+        title: z.string().describe("Memory title (or id when the memory has been deleted)."),
+        edge_type_to_next: edgeTypeEnum.optional().describe("The edge type linking this node to the next one in the path. Absent on the final node."),
+      })).describe("Ordered list of nodes from `from_id` to `to_id`, each annotated with the edge type that takes you to the next node."),
+      message: z.string().optional().describe("Human-readable failure reason when `found=false` (e.g. `No path from <a> to <b> within <n> hops`)."),
+    },
   },
-  async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemoryPath(memRepo, edgesRepo, params) }],
-  })
+  async (params) => {
+    const { text, structured } = await findMemoryPath(memRepo, edgesRepo, params);
+    return { content: [{ type: "text" as const, text }], structuredContent: structured };
+  }
 );
 
 async function main(): Promise<void> {
