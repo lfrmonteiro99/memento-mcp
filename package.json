@@ -4,7 +4,7 @@
   "description": "Persistent memory MCP server with typed memories, decay scoring, and token-aware context injection",
   "type": "module",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "license": "MIT",
   "author": "Luis Monteiro",
@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "^12.0.0",
     "smol-toml": "^1.0.0",
     "zod": "^3.25.28 || ^4.0.0"
   },
