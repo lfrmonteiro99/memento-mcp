@@ -13,6 +13,11 @@
 | `memory_compress` | Manually run the compression pipeline on a project (or all) |
 | `memory_export` | Export memories, decisions, and pitfalls as portable JSON |
 | `memory_import` | Import a JSON dump with `skip` or `overwrite` conflict strategy |
+| `memory_link` | Create a typed edge between two memories (`relates_to`, `supersedes`, `caused_by`, `mitigated_by`, `references`, `implements`) |
+| `memory_unlink` | Remove a typed edge between two memories |
+| `memory_graph` | Return the local subgraph around a memory (BFS up to `depth`); cost markers per neighbor |
+| `memory_path` | Find the shortest typed-edge path between two memories within `max_hops` |
+| `memory_dedup_check` | Pre-flight probe: list memories whose embedding similarity to a candidate exceeds a threshold (no-op if embeddings disabled) |
 | `decisions_log` | Store, list, or search architectural decisions with category and versioning |
 | `pitfalls_log` | Track recurring problems with occurrence count and dedup |
 | `memory_analytics` | View injection, capture, compression, and memory analytics |
@@ -179,6 +184,84 @@ Output is JSON:
 | `strategy` | enum | `"skip"` | `"skip"` keeps existing rows on id conflict; `"overwrite"` replaces them |
 
 Transactional (all-or-nothing). Rejects incompatible `schema_version` with a clear error. Returns counts of imported / skipped / overwritten rows.
+
+</details>
+
+<details>
+<summary><code>memory_link</code></summary>
+
+Create a typed edge between two memories. Idempotent — re-linking the same `(from_id, to_id, edge_type)` updates the weight (`INSERT OR REPLACE`).
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `from_id` | string | — | required |
+| `to_id` | string | — | required; must differ from `from_id` |
+| `edge_type` | enum | — | `relates_to` / `supersedes` / `caused_by` / `mitigated_by` / `references` / `implements` |
+| `weight` | number | `1.0` | clamped to [0, 1] |
+
+Both memories must exist and not be soft-deleted. Hard-deleting a memory cascades to remove its edges.
+
+</details>
+
+<details>
+<summary><code>memory_unlink</code></summary>
+
+| Param | Type | Notes |
+|---|---|---|
+| `from_id` | string | required |
+| `to_id` | string | required |
+| `edge_type` | enum | one of the six edge types |
+
+Returns a clean message indicating whether an edge was removed.
+
+</details>
+
+<details>
+<summary><code>memory_graph</code></summary>
+
+Return the local subgraph around a memory via BFS. One line per edge in the result, each annotated with a `[Nt]` token-cost marker.
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `id` | string | — | required; root memory id |
+| `depth` | number | `2` | clamped to [0, 5]; `depth=0` returns just the root |
+| `edge_types` | enum[] | all | restrict traversal to a subset of edge types |
+| `direction` | enum | `"both"` | `"out"` / `"in"` / `"both"` |
+
+Use after `memory_search(detail="index")` when you want context-rich relationships for one specific hit. Cheaper than calling `memory_get` on each neighbor.
+
+</details>
+
+<details>
+<summary><code>memory_path</code></summary>
+
+Find the shortest path between two memories along typed edges (BFS).
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `from_id` | string | — | required |
+| `to_id` | string | — | required |
+| `max_hops` | number | `4` | clamped to [1, 10] |
+| `edge_types` | enum[] | all | restrict traversal to a subset of edge types |
+
+Returns the chain `id_a "Title A" → edge_type → id_b "Title B" → edge_type → id_c "Title C"`, or a clean `No path …` message if unreachable within `max_hops`.
+
+</details>
+
+<details>
+<summary><code>memory_dedup_check</code></summary>
+
+Pre-flight probe: list memories whose embedding similarity to a candidate exceeds a threshold. Cheap to call before `memory_store` so the LLM can decide whether to update an existing memory instead of inserting a near-duplicate.
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `content` | string | — | required |
+| `title` | string | `""` | prepended to `content` if provided |
+| `project_path` | string | `""` | scope to one project; empty → global scan |
+| `threshold` | number | from config | overrides `search.embeddings.dedup_threshold` for this call |
+| `limit` | number | `5` | capped at 20 |
+
+If `search.embeddings.enabled` is false (or no API key is set), the tool returns a clear no-op message. Provider/network failures fall back to "no duplicates" rather than throwing. See [embeddings](embeddings.md#smart-write-time-dedup).
 
 </details>
 

@@ -79,6 +79,24 @@ Memory stored with ID: <id>
 
 A `strict` mode hit blocks the insert entirely with the same message.
 
+### Pre-flight probe — `memory_dedup_check`
+
+The agent can also probe for near-duplicates **before** calling `memory_store`, which is the cheaper path when there's a chance the right action is `memory_update` on an existing memory rather than a new insert:
+
+```text
+memory_dedup_check(content="...", title="...", threshold=0.85, limit=5)
+```
+
+Returns up to `limit` matches above the threshold, each line annotated with a `[Nt]` token-cost marker:
+
+```
+Top 2 match(es) above threshold 0.85:
+  [54t] 1. sim=0.953  abc-123  "Use Postgres"  (decision)
+  [56t] 2. sim=0.881  def-456  "Postgres + RDS"  (architecture)
+```
+
+If embeddings are disabled, the tool returns a clear no-op message instead of failing. Provider/network errors fall back to "no duplicates" so the probe never throws.
+
 ## Privacy
 
 The dedup pipeline applies `scrubSecrets` and `redactPrivate` to the candidate text **before** it leaves for the embedding API. `<private>` regions and recognized secret patterns never reach the provider. See [Privacy](privacy.md).

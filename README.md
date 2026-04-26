@@ -363,7 +363,23 @@ Embeddings are opt-in and use your own provider key.
 
 When embeddings are enabled, near-duplicate memories can be detected at write time, before your memory store becomes a landfill of almost-identical “important notes”.
 
+A standalone `memory_dedup_check` tool also lets the agent probe for near-duplicates *before* calling `memory_store`, so it can update an existing memory instead of inserting yet another one.
+
 > Read more: [Smart write-time dedup](docs/embeddings.md#smart-write-time-dedup)
+
+### Knowledge graph
+
+Connect related memories with **typed edges** so the agent can follow context instead of re-deriving structure from raw text every turn.
+
+Six edge types ship in v1:
+
+`relates_to` &nbsp;·&nbsp; `supersedes` &nbsp;·&nbsp; `caused_by` &nbsp;·&nbsp; `mitigated_by` &nbsp;·&nbsp; `references` &nbsp;·&nbsp; `implements`
+
+Tools: `memory_link`, `memory_unlink`, `memory_graph` (local subgraph BFS), `memory_path` (shortest path between two memories).
+
+The existing `supersedes_memory_id` column is auto-promoted into a `supersedes` edge so historical data participates in graph queries from day one.
+
+> Read more: [MCP tools reference](docs/mcp-tools.md#memory_link)
 
 ### Session summaries
 
