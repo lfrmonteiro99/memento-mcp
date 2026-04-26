@@ -11,10 +11,10 @@ import { EdgesRepo } from "./db/edges.js";
 import { loadConfig, getDefaultConfigPath, getDefaultDbPath } from "./lib/config.js";
 import { createLogger, logLevelFromEnv } from "./lib/logger.js";
 import { handleMemoryStore } from "./tools/memory-store.js";
-import { handleMemorySearch } from "./tools/memory-search.js";
+import { searchMemories } from "./tools/memory-search.js";
 import { handleMemoryGet } from "./tools/memory-get.js";
 import { handleMemoryTimeline } from "./tools/memory-timeline.js";
-import { handleMemoryList } from "./tools/memory-list.js";
+import { listMemories } from "./tools/memory-list.js";
 import { handleMemoryDelete } from "./tools/memory-delete.js";
 import { handleMemoryDedupCheck } from "./tools/memory-dedup-check.js";
 import { handleDecisionsLog } from "./tools/decisions-log.js";
@@ -26,8 +26,8 @@ import { handleMemoryPin } from "./tools/memory-pin.js";
 import { handleMemoryExport, handleMemoryImport } from "./tools/memory-transfer.js";
 import { handleMemoryLink } from "./tools/memory-link.js";
 import { handleMemoryUnlink } from "./tools/memory-unlink.js";
-import { handleMemoryGraph } from "./tools/memory-graph.js";
-import { handleMemoryPath } from "./tools/memory-path.js";
+import { walkMemoryGraph } from "./tools/memory-graph.js";
+import { findMemoryPath } from "./tools/memory-path.js";
 import { AnalyticsTracker, installFlushOnExit } from "./analytics/tracker.js";
 import { cleanupExpiredAnalytics } from "./analytics/retention.js";
 import { runCompressionCycle } from "./engine/compressor.js";
@@ -250,10 +250,28 @@ server.registerTool(
       openWorldHint: false,
     },
     outputSchema: {
-      message: z.string().describe("Markdown-formatted ranked results at the requested `detail` level. Empty result set is rendered as `No results found.` Vault hits, when present, are appended in a separate section."),
+      query: z.string().describe("Echo of the query that was executed."),
+      detail: z.enum(["index", "summary", "full"]).describe("Disclosure level used to render this result set."),
+      count: z.number().int().nonnegative().describe("Number of SQLite/file results returned (after `limit` is applied)."),
+      results: z.array(z.object({
+        id: z.string().describe("Memory id, e.g. `mem_01HXYZ...`."),
+        title: z.string().describe("Memory title."),
+        score: z.number().describe("Decay-weighted relevance score in [0, 1] (higher = more relevant)."),
+        source: z.enum(["sqlite", "file"]).describe("Whether the hit came from SQLite or a registered markdown file source."),
+        memory_type: z.string().optional().describe("Memory type when known (e.g. `fact`, `decision`)."),
+        body: z.string().optional().describe("Body preview — only present when `detail=\"summary\"` or `\"full\"`."),
+      })).describe("Ranked SQLite/file hits."),
+      vault_results: z.array(z.object({
+        relativePath: z.string().describe("Path of the vault note relative to the vault root."),
+        title: z.string().optional().describe("Vault note title, when available."),
+      })).describe("Obsidian vault matches (separate from SQLite results). Always an array — empty when the vault is disabled or has no matches."),
+      total_tokens: z.number().int().nonnegative().describe("Estimated token cost of the rendered text payload."),
     },
   },
-  async (params) => textResult(await handleMemorySearch(memRepo, config, params, db, analyticsTracker))
+  async (params) => {
+    const { text, structured } = await searchMemories(memRepo, config, params, db, analyticsTracker);
+    return { content: [{ type: "text" as const, text }], structuredContent: structured };
+  }
 );
 
 server.registerTool(
@@ -368,10 +386,29 @@ server.registerTool(
       openWorldHint: false,
     },
     outputSchema: {
-      message: z.string().describe("Markdown-formatted list at the requested `detail` level, or `No memories found.` Vault notes appear in a separate section when included."),
+      detail: z.enum(["index", "summary", "full"]).describe("Disclosure level used to render this list."),
+      count: z.number().int().nonnegative().describe("Number of SQLite/file memories returned."),
+      memories: z.array(z.object({
+        id: z.string().describe("Memory id."),
+        title: z.string().describe("Memory title."),
+        source: z.enum(["sqlite", "file"]).describe("Whether the row came from SQLite or a registered markdown file source."),
+        memory_type: z.string().optional().describe("Memory type (e.g. `fact`, `decision`)."),
+        importance: z.number().optional().describe("Importance score in [0, 1] when known."),
+        pinned: z.boolean().optional().describe("Pinned flag when known."),
+        body: z.string().optional().describe("Body preview — only present when `detail=\"summary\"` or `\"full\"`."),
+      })).describe("Listed memories ordered by recency/importance."),
+      vault_results: z.array(z.object({
+        id: z.string().describe("Vault note id."),
+        title: z.string().describe("Vault note title."),
+        relativePath: z.string().describe("Path relative to the vault root."),
+        kind: z.string().optional().describe("Vault subtype (e.g. `architecture`, `runbook`) when classified."),
+      })).describe("Obsidian vault matches when the vault is enabled and `vault_kind`/`vault_folder` filters apply. Empty otherwise."),
     },
   },
-  async (params) => textResult(await handleMemoryList(memRepo, config, params, db))
+  async (params) => {
+    const { text, structured } = await listMemories(memRepo, config, params, db);
+    return { content: [{ type: "text" as const, text }], structuredContent: structured };
+  }
 );
 
 server.registerTool(
@@ -713,10 +750,29 @@ server.registerTool(
       openWorldHint: false,
     },
     outputSchema: {
-      message: z.string().describe("Markdown rendering of the BFS frontier: root node + per-hop neighbours grouped by depth, each line showing edge type and target title. Returns `Memory <id> not found.` for a missing root."),
+      found: z.boolean().describe("`true` when the root memory exists. `false` when the id was not found (in which case `root` and `edges` are absent/empty)."),
+      root: z.object({
+        id: z.string().describe("Root memory id."),
+        title: z.string().describe("Root memory title."),
+        memory_type: z.string().describe("Root memory type."),
+      }).optional().describe("Root node metadata; absent when `found=false`."),
+      edges: z.array(z.object({
+        direction: z.enum(["out", "in"]).describe("`out` when the edge points away from the root, `in` when it points toward it."),
+        edge_type: edgeTypeEnum.describe("Typed relationship along this edge."),
+        weight: z.number().optional().describe("Edge strength in [0, 1] when stored."),
+        other: z.object({
+          id: z.string().describe("Far-end memory id."),
+          title: z.string().describe("Far-end memory title (or the id when the memory was deleted)."),
+          memory_type: z.string().describe("Far-end memory type, or `unknown` if the row is missing."),
+        }).describe("The neighbour node on the other side of this edge."),
+        token_cost: z.number().int().nonnegative().describe("Estimated token cost of rendering this edge in the text output."),
+      })).describe("Edges discovered by the BFS walk, sorted by edge_type then by neighbour id."),
     },
   },
-  async (params) => textResult(await handleMemoryGraph(memRepo, edgesRepo, params))
+  async (params) => {
+    const { text, structured } = await walkMemoryGraph(memRepo, edgesRepo, params);
+    return { content: [{ type: "text" as const, text }], structuredContent: structured };
+  }
 );
 
 server.registerTool(
@@ -741,10 +797,20 @@ server.registerTool(
       openWorldHint: false,
     },
     outputSchema: {
-      message: z.string().describe("Path rendered as `<title-A> -[<edge_type>]-> <title-B> -[<edge_type>]-> ...` along with hop count, or `No path within <max_hops> hops.` Returns `Memory <id> not found.` when an endpoint is missing."),
+      found: z.boolean().describe("`true` when a path exists within `max_hops`; `false` otherwise (in which case `path` is empty and `message` carries the reason)."),
+      hops: z.number().int().nonnegative().describe("Number of edges in the path. 0 when `from_id === to_id`."),
+      path: z.array(z.object({
+        id: z.string().describe("Memory id of this node along the path."),
+        title: z.string().describe("Memory title (or id when the memory has been deleted)."),
+        edge_type_to_next: edgeTypeEnum.optional().describe("The edge type linking this node to the next one in the path. Absent on the final node."),
+      })).describe("Ordered list of nodes from `from_id` to `to_id`, each annotated with the edge type that takes you to the next node."),
+      message: z.string().optional().describe("Human-readable failure reason when `found=false` (e.g. `No path from <a> to <b> within <n> hops`)."),
     },
   },
-  async (params) => textResult(await handleMemoryPath(memRepo, edgesRepo, params))
+  async (params) => {
+    const { text, structured } = await findMemoryPath(memRepo, edgesRepo, params);
+    return { content: [{ type: "text" as const, text }], structuredContent: structured };
+  }
 );
 
 async function main(): Promise<void> {

@@ -8,7 +8,29 @@ import { formatIndex, formatFull, formatSummary, formatVaultEntry, formatVaultIn
 import { estimateTokensV2 } from "../engine/token-estimator.js";
 import { searchVault } from "../engine/vault-router.js";
 
-export async function handleMemorySearch(
+/** Structured payload for the memory_search tool's outputSchema. */
+export type MemorySearchResult = {
+  query: string;
+  detail: "index" | "summary" | "full";
+  count: number;
+  results: Array<{
+    id: string;
+    title: string;
+    score: number;
+    source: "sqlite" | "file";
+    memory_type?: string;
+    body?: string;
+  }>;
+  vault_results: Array<{ relativePath: string; title?: string }>;
+  total_tokens: number;
+};
+
+/**
+ * Run a memory search and produce both a human-readable text rendering and a
+ * machine-readable structured payload. The text and structured shape are
+ * computed from the same in-memory result set so they can never disagree.
+ */
+export async function searchMemories(
   repo: MemoriesRepo,
   config: Config,
   params: {
@@ -17,7 +39,7 @@ export async function handleMemorySearch(
   },
   db?: Database.Database,
   analyticsTracker?: AnalyticsTracker,
-): Promise<string> {
+): Promise<{ text: string; structured: MemorySearchResult }> {
   const limit = params.limit ?? config.search.maxResults;
   const detail = params.detail ?? config.search.defaultDetail;
   const sqliteResults: any[] = [];
@@ -65,19 +87,57 @@ export async function handleMemorySearch(
       : vaultSection;
   }
 
-  const finalOutput = output || "No results found.";
+  const text = output || "No results found.";
+  const total_tokens = estimateTokensV2(text);
 
   // Emit analytics event for search layer used
   if (analyticsTracker) {
-    const totalTokens = estimateTokensV2(finalOutput);
     const sessionId = process.env.CLAUDE_SESSION_ID || "unknown";
     analyticsTracker.track({
       event_type: "search_layer_used",
       session_id: sessionId,
-      event_data: JSON.stringify({ detail: detail || "full", results: limitedSqlite.length, total_tokens: totalTokens }),
-      tokens_cost: totalTokens,
+      event_data: JSON.stringify({ detail: detail || "full", results: limitedSqlite.length, total_tokens }),
+      tokens_cost: total_tokens,
     });
   }
 
-  return finalOutput;
+  const structured: MemorySearchResult = {
+    query: params.query,
+    detail: (detail ?? "index") as "index" | "summary" | "full",
+    count: limitedSqlite.length,
+    results: limitedSqlite.map(r => ({
+      id: String(r.id),
+      title: String(r.title ?? ""),
+      score: Number(r.score ?? 0),
+      source: r.source as "sqlite" | "file",
+      ...(r.memory_type ? { memory_type: String(r.memory_type) } : {}),
+      ...(detail !== "index" && r.body ? { body: String(r.body) } : {}),
+    })),
+    vault_results: vaultEntries.map(v => ({
+      relativePath: String((v as any).relativePath ?? (v as any).path ?? ""),
+      ...(((v as any).title) ? { title: String((v as any).title) } : {}),
+    })),
+    total_tokens,
+  };
+
+  return { text, structured };
+}
+
+/**
+ * Backward-compatible wrapper — many tests and call sites import this and
+ * expect a string. Internally it just delegates to `searchMemories` and
+ * returns the rendered text.
+ */
+export async function handleMemorySearch(
+  repo: MemoriesRepo,
+  config: Config,
+  params: {
+    query: string; project_path?: string; memory_type?: string;
+    limit?: number; detail?: "index" | "summary" | "full"; include_file_memories?: boolean;
+  },
+  db?: Database.Database,
+  analyticsTracker?: AnalyticsTracker,
+): Promise<string> {
+  const { text } = await searchMemories(repo, config, params, db, analyticsTracker);
+  return text;
 }
