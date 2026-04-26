@@ -7,6 +7,7 @@ import { DecisionsRepo } from "./db/decisions.js";
 import { PitfallsRepo } from "./db/pitfalls.js";
 import { SessionsRepo } from "./db/sessions.js";
 import { EmbeddingsRepo } from "./db/embeddings.js";
+import { EdgesRepo } from "./db/edges.js";
 import { loadConfig, getDefaultConfigPath, getDefaultDbPath } from "./lib/config.js";
 import { createLogger, logLevelFromEnv } from "./lib/logger.js";
 import { handleMemoryStore } from "./tools/memory-store.js";
@@ -22,6 +23,10 @@ import { handleMemoryCompress } from "./tools/memory-compress.js";
 import { handleMemoryUpdate } from "./tools/memory-update.js";
 import { handleMemoryPin } from "./tools/memory-pin.js";
 import { handleMemoryExport, handleMemoryImport } from "./tools/memory-transfer.js";
+import { handleMemoryLink } from "./tools/memory-link.js";
+import { handleMemoryUnlink } from "./tools/memory-unlink.js";
+import { handleMemoryGraph } from "./tools/memory-graph.js";
+import { handleMemoryPath } from "./tools/memory-path.js";
 import { AnalyticsTracker, installFlushOnExit } from "./analytics/tracker.js";
 import { cleanupExpiredAnalytics } from "./analytics/retention.js";
 import { runCompressionCycle } from "./engine/compressor.js";
@@ -39,6 +44,7 @@ const decRepo = new DecisionsRepo(db);
 const pitRepo = new PitfallsRepo(db);
 const sessRepo = new SessionsRepo(db);
 const embRepo = new EmbeddingsRepo(db);
+const edgesRepo = new EdgesRepo(db);
 const analyticsTracker = new AnalyticsTracker(db, { flushThreshold: config.analytics.flushThreshold });
 const disposeFlush = installFlushOnExit(analyticsTracker);
 
@@ -382,6 +388,79 @@ server.tool(
   },
   async (params) => ({
     content: [{ type: "text" as const, text: await handleMemoryImport(db, params) }],
+  })
+);
+
+const edgeTypeEnum = z.enum(["relates_to", "supersedes", "caused_by", "mitigated_by", "references", "implements"]);
+
+server.tool(
+  "memory_link",
+  [
+    "Create a typed edge between two memories. Edge types: relates_to | supersedes | caused_by | mitigated_by | references | implements.",
+    "Use memory_search first to find the ids, then memory_link to connect them.",
+    "Optional weight (0-1) signals edge strength (default 1.0).",
+    "Re-linking an existing (from,to,type) triple updates its weight.",
+  ].join(" "),
+  {
+    from_id: z.string(),
+    to_id: z.string(),
+    edge_type: edgeTypeEnum,
+    weight: z.number().min(0).max(1).default(1.0),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryLink(memRepo, edgesRepo, params) }],
+  })
+);
+
+server.tool(
+  "memory_unlink",
+  "Remove a typed edge between two memories. Provide the same from_id, to_id, and edge_type used when the edge was created.",
+  {
+    from_id: z.string(),
+    to_id: z.string(),
+    edge_type: edgeTypeEnum,
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryUnlink(edgesRepo, params) }],
+  })
+);
+
+server.tool(
+  "memory_graph",
+  [
+    "Explore the knowledge graph around a memory (BFS up to depth hops).",
+    "Returns neighbour nodes with typed edges. Edge types: relates_to | supersedes | caused_by | mitigated_by | references | implements.",
+    "Chain: memory_search → memory_graph to map related concepts.",
+    "direction='out' follows outgoing edges only; 'in' follows incoming; 'both' (default) follows all.",
+    "Depth 0 returns just the root node; max depth is 5.",
+  ].join(" "),
+  {
+    id: z.string(),
+    depth: z.number().int().min(0).max(5).default(2),
+    edge_types: z.array(edgeTypeEnum).optional(),
+    direction: z.enum(["out", "in", "both"]).default("both"),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryGraph(memRepo, edgesRepo, params) }],
+  })
+);
+
+server.tool(
+  "memory_path",
+  [
+    "Find the shortest path between two memories in the knowledge graph.",
+    "Returns the chain of memory ids and edge types connecting from_id to to_id.",
+    "Chain: memory_search → memory_path to trace cause-effect or dependency chains.",
+    "max_hops limits BFS depth (default 4, max 10).",
+  ].join(" "),
+  {
+    from_id: z.string(),
+    to_id: z.string(),
+    max_hops: z.number().int().min(1).max(10).default(4),
+    edge_types: z.array(edgeTypeEnum).optional(),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryPath(memRepo, edgesRepo, params) }],
   })
 );
 

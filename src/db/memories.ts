@@ -102,17 +102,27 @@ export class MemoriesRepo {
     // Issue #3: claude_session_id column added in migration v5.
     // Issue #4: has_private column added in migration v6.
     const hasPrivateFlag = hasPrivate(cleanBody) ? 1 : 0;
-    this.db.prepare(`
-      INSERT INTO memories (id, project_id, memory_type, scope, title, body, tags,
-                            importance_score, is_pinned, supersedes_memory_id, source,
-                            claude_session_id, has_private,
-                            created_at, updated_at, last_accessed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, projectId, params.memoryType ?? "fact", params.scope ?? "project",
-           cleanTitle, cleanBody, tagsStr, params.importance ?? 0.5,
-           params.pin ? 1 : 0, params.supersedesId || null, params.source ?? "user",
-           params.claudeSessionId ?? null, hasPrivateFlag,
-           now, now, now);
+    this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO memories (id, project_id, memory_type, scope, title, body, tags,
+                              importance_score, is_pinned, supersedes_memory_id, source,
+                              claude_session_id, has_private,
+                              created_at, updated_at, last_accessed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, projectId, params.memoryType ?? "fact", params.scope ?? "project",
+             cleanTitle, cleanBody, tagsStr, params.importance ?? 0.5,
+             params.pin ? 1 : 0, params.supersedesId || null, params.source ?? "user",
+             params.claudeSessionId ?? null, hasPrivateFlag,
+             now, now, now);
+
+      // Issue #27: also insert a 'supersedes' edge into memory_edges for atomicity.
+      if (params.supersedesId) {
+        this.db.prepare(`
+          INSERT OR IGNORE INTO memory_edges (from_id, to_id, edge_type, weight, created_at)
+          VALUES (?, ?, 'supersedes', 1.0, ?)
+        `).run(id, params.supersedesId, now);
+      }
+    })();
     return id;
   }
 
