@@ -2,14 +2,14 @@
 
 ## Prerequisites
 
-- **Node.js** `>=18`
+- **Node.js** `>=20` (20.x, 22.x, or 24.x — Node 18 is EOL and no longer supported by `better-sqlite3` v12)
 - **npm**
 - a **GitHub Personal Access Token** with `read:packages` to install from GitHub Packages
 - a supported MCP client such as **Codex**, **Claude Code**, **Cursor**, or another stdio-compatible MCP client
 
 Recommended:
 
-- **Node 20** for development and test runs
+- **Node 22** (current LTS) for development and test runs
 - an **Obsidian vault** if you want vault integration (see [Vault integration](vault.md))
 
 If `better-sqlite3` needs compilation on your machine, install the usual native build prerequisites for Node addons.
