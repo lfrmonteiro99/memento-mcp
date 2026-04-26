@@ -16,6 +16,7 @@ import { handleMemoryGet } from "./tools/memory-get.js";
 import { handleMemoryTimeline } from "./tools/memory-timeline.js";
 import { handleMemoryList } from "./tools/memory-list.js";
 import { handleMemoryDelete } from "./tools/memory-delete.js";
+import { handleMemoryDedupCheck } from "./tools/memory-dedup-check.js";
 import { handleDecisionsLog } from "./tools/decisions-log.js";
 import { handlePitfallsLog } from "./tools/pitfalls-log.js";
 import { handleMemoryAnalytics } from "./tools/analytics-tools.js";
@@ -35,6 +36,7 @@ import { configureFileMemoryCache } from "./lib/file-memory.js";
 import { promoteImportanceFromUtility } from "./engine/importance-promoter.js";
 import { collectPoliciesPerProject } from "./lib/policy.js";
 import { logDedupOnFirstUse } from "./engine/embeddings/dedup.js";
+import { createProvider } from "./engine/embeddings/provider.js";
 
 const log = createLogger(logLevelFromEnv());
 const config = loadConfig(getDefaultConfigPath());
@@ -45,6 +47,7 @@ const pitRepo = new PitfallsRepo(db);
 const sessRepo = new SessionsRepo(db);
 const embRepo = new EmbeddingsRepo(db);
 const edgesRepo = new EdgesRepo(db);
+const dedupProvider = createProvider(config.search.embeddings);
 const analyticsTracker = new AnalyticsTracker(db, { flushThreshold: config.analytics.flushThreshold });
 const disposeFlush = installFlushOnExit(analyticsTracker);
 
@@ -244,6 +247,26 @@ server.tool(
   },
   async (params) => ({
     content: [{ type: "text" as const, text: await handleMemoryTimeline(memRepo, params) }],
+  })
+);
+
+server.tool(
+  "memory_dedup_check",
+  [
+    "Check if content is a near-duplicate of existing memories before storing.",
+    "Returns up to N matches above the cosine similarity threshold.",
+    "~50 tokens per result. Cheap pre-flight before memory_store.",
+    "If embeddings are disabled, returns a clear no-op message."
+  ].join(" "),
+  {
+    content: z.string(),
+    title: z.string().optional(),
+    project_path: z.string().optional(),
+    threshold: z.number().min(0).max(1).optional(),
+    limit: z.number().int().min(1).max(20).default(5),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryDedupCheck(db, memRepo, embRepo, dedupProvider, config, params) }]
   })
 );
 
