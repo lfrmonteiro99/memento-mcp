@@ -62,6 +62,6 @@ The `init` command writes a template with every section commented out and a one-
 
 ## Composition with other features
 
-- **CLAUDE.md import** — sections that violate the policy are skipped during import with a printed reason.
+- **Memory file imports** — `import claude-md`, `import cursor`, `import copilot`, `import auto`, and the other format subcommands all run sections through the same policy gate; violators are skipped with a printed reason. See [Importing existing project memory](import.md).
 - **Auto-capture** — captured memories also pass through policy enforcement.
 - **Team sync** — policy is per-clone (each repo carries its own); the file is git-tracked alongside other project config.
