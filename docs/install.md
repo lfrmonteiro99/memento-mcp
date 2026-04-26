@@ -21,7 +21,7 @@ The package is published on **GitHub Packages**, not the public npm registry.
 ### 1. Configure npm for GitHub Packages
 
 ```bash
-npm config set @lfrmonteiro99:registry https://npm.pkg.github.com
+npm config set @luispmonteiro:registry https://npm.pkg.github.com
 echo "//npm.pkg.github.com/:_authToken=YOUR_PAT_HERE" >> ~/.npmrc
 ```
 
@@ -30,7 +30,7 @@ Replace `YOUR_PAT_HERE` with a GitHub PAT that has `read:packages`.
 ### 2. Install globally
 
 ```bash
-npm install -g @lfrmonteiro99/memento-memory-mcp
+npm install -g @luispmonteiro/memento-memory-mcp
 ```
 
 Global install matters because:
@@ -126,7 +126,7 @@ If `memento-mcp` is not on `PATH`, use an absolute command instead:
 ```toml
 [mcp_servers.memento-mcp]
 command = "/home/you/.nvm/versions/node/v20.20.2/bin/node"
-args = ["/home/you/.nvm/versions/node/v20.20.2/lib/node_modules/@lfrmonteiro99/memento-memory-mcp/dist/cli/main.js"]
+args = ["/home/you/.nvm/versions/node/v20.20.2/lib/node_modules/@luispmonteiro/memento-memory-mcp/dist/cli/main.js"]
 ```
 
 Hooks (Codex 0.114.0, March 2026, or newer). First enable the experimental engine in `~/.codex/config.toml`:

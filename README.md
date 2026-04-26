@@ -36,7 +36,7 @@ It stores structured memories locally in SQLite, retrieves the right context whe
 ## Quick start
 
 ```bash
-npm install -g @lfrmonteiro99/memento-memory-mcp
+npm install -g @luispmonteiro/memento-memory-mcp
 memento-mcp install
 memento-mcp import auto       # detects CLAUDE.md, AGENTS.md, .cursor/rules, .github/copilot-instructions, …
 memento-mcp ui
@@ -254,7 +254,7 @@ Browse memories, sessions, projects, sync state, analytics, and drift without op
 **1.** Install from npm:
 
 ```bash
-npm install -g @lfrmonteiro99/memento-memory-mcp
+npm install -g @luispmonteiro/memento-memory-mcp
 ```
 
 **2.** Wire it into your MCP client:
@@ -283,7 +283,7 @@ memento-mcp ui
 
 ```bash
 # 1. Install from npm
-npm install -g @lfrmonteiro99/memento-memory-mcp
+npm install -g @luispmonteiro/memento-memory-mcp
 
 # 2. Wire your MCP client
 memento-mcp install

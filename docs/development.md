@@ -30,7 +30,7 @@ memento-mcp is designed to keep injected context small without losing relevance:
 
 The v2 upgrade is designed to be drop-in:
 
-1. `npm install -g @lfrmonteiro99/memento-memory-mcp@latest` — the bin names from v1 (`memento-mcp`, `memento-hook-search`, `memento-hook-session`) continue to work. v2 added `memento-hook-capture` and `memento-hook-summarize`.
+1. `npm install -g @luispmonteiro/memento-memory-mcp@latest` — the bin names from v1 (`memento-mcp`, `memento-hook-search`, `memento-hook-session`) continue to work. v2 added `memento-hook-capture` and `memento-hook-summarize`.
 2. The SQLite migration runs automatically on the first open. New tables: `analytics_events`, `compression_log`, `embeddings`, `memory_edges`-equivalents (none yet — see roadmap), `vault_*`, `sync_state`, `sync_file_hashes`. New columns on `memories`: `source`, `adaptive_score`, `claude_session_id`, `has_private`. v1 tags stored as CSV are auto-converted to JSON arrays.
 3. v1 config files continue to parse. New v2 sections (`[auto_capture]`, `[compression]`, `[adaptive]`, `[analytics]`, `[file_memory]`, `[decay]`, `[search.embeddings]`, `[hooks.session_end_llm]`, `[sync]`, `[profile]`) are optional and default to safe values.
 4. Add the `PostToolUse` hook if you want auto-capture (see [install](install.md)). This is what feeds `analytics_events` — skip it and `memory_analytics` will still work but show neutral utility scores.
