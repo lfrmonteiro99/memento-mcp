@@ -75,12 +75,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Open PR to master
+      - name: Open PR to master and merge
         run: |
           gh pr create \
             --base master \
             --head "${{ steps.commit.outputs.branch }}" \
             --title "chore(release): v${{ inputs.version }}" \
             --body "Automated version bump for v${{ inputs.version }}. Already published to npm and tagged."
+          gh pr merge "${{ steps.commit.outputs.branch }}" --squash --delete-branch --auto
         env:
           GH_TOKEN: ${{ github.token }}
