@@ -36,7 +36,7 @@ It stores structured memories locally in SQLite, retrieves the right context whe
 ```bash
 npm install -g @lfrmonteiro99/memento-memory-mcp
 memento-mcp install
-memento-mcp import claude-md
+memento-mcp import auto       # detects CLAUDE.md, AGENTS.md, .cursor/rules, .github/copilot-instructions, …
 memento-mcp ui
 ```
 
@@ -67,7 +67,7 @@ memento-mcp ui
 **Getting started**
 
 - [Installation & client setup](docs/install.md)
-- [Importing CLAUDE.md](docs/import.md)
+- [Importing existing project memory](docs/import.md) — CLAUDE.md, AGENTS.md, Cursor, Copilot, Gemini, Windsurf, Cline, Roo
 
 </td>
 <td valign="top" width="33%">
@@ -144,7 +144,7 @@ It can remember:
 | Architectural decisions | Project conventions |
 | Known pitfalls | Implementation patterns |
 | Debugging notes | User/team preferences |
-| Session summaries | Reusable context from `CLAUDE.md` |
+| Session summaries | Reusable context from `CLAUDE.md`, `AGENTS.md`, Cursor rules, Copilot instructions, … |
 | Curated notes from an Obsidian vault | |
 
 Then it injects the relevant context back into your agent at the right time, without forcing you to paste the same project explanation into every new chat like a medieval scribe with npm installed.
@@ -157,29 +157,29 @@ Then it injects the relevant context back into your agent at the right time, wit
 
 Without persistent memory, every new session starts blind:
 
-- `CLAUDE.md` is re-pasted or stuffed into the system prompt
+- `CLAUDE.md` / `AGENTS.md` / `.cursor/rules/` / Copilot instructions get re-pasted or stuffed into the system prompt
 - Architectural decisions are re-explained mid-conversation
 - Last week's pitfall is re-discovered the hard way
 - "What were we doing yesterday?" eats hundreds of tokens before any actual work happens
 
-`memento-mcp` imports that context **once** and serves back only the slice the current prompt needs — using [progressive disclosure](docs/search.md) that prefers cheap index/summary layers over full bodies.
+`memento-mcp` imports that context **once** — from any of the major LLM instruction files — and serves back only the slice the current prompt needs, using [progressive disclosure](docs/search.md) that prefers cheap index/summary layers over full bodies.
 
 ```bash
-memento-mcp import claude-md
+memento-mcp import auto       # detects every known LLM memory file in the project
 ```
 
 #### Conservative per-session savings
 
 | Where the tokens go | Without memento | With memento | Saved |
 | :--- | ---: | ---: | ---: |
-| `CLAUDE.md` re-injected | ~1,500 t | imported once → 0 t | **~1,500 t** |
+| `CLAUDE.md` / `AGENTS.md` / `.cursorrules` re-injected | ~1,500 t | imported once → 0 t | **~1,500 t** |
 | Architecture re-explained mid-chat | ~500 t | 1 retrieved decision (~80 t) | **~420 t** |
 | Pitfall re-discovered | ~300 t | 1 retrieved pitfall (~80 t) | **~220 t** |
 | "What were we doing?" recap | ~400 t | 1 session summary (~200 t) | **~200 t** |
 | **Total prelude per session** | **~2,700 t** | **~360 t** | **~2,340 t** |
 
 > [!NOTE]
-> Numbers are deliberately conservative. Real-world `CLAUDE.md` files routinely reach 3-5k tokens, and longer-running projects accumulate dozens of decisions and pitfalls. Savings scale with project age.
+> Numbers are deliberately conservative. Real-world `CLAUDE.md` / `AGENTS.md` / `.cursor/rules/` trees routinely reach 3-5k tokens (often more once a team accumulates files across multiple tools), and longer-running projects accumulate dozens of decisions and pitfalls. Savings scale with project age.
 
 #### Scaled out
 
@@ -285,9 +285,9 @@ npm install -g @lfrmonteiro99/memento-memory-mcp
 # 2. Wire your MCP client
 memento-mcp install
 
-# 3. Import existing project memory
-memento-mcp import claude-md --dry-run
-memento-mcp import claude-md --no-confirm
+# 3. Import existing project memory (CLAUDE.md, AGENTS.md, .cursor/rules, copilot-instructions, …)
+memento-mcp import auto --dry-run
+memento-mcp import auto --no-confirm
 
 # 4. Open the local inspector
 memento-mcp ui
