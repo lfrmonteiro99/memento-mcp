@@ -13,6 +13,8 @@ A local-first MCP server that gives **Claude Code**, **Codex**, **Cursor**, and 
 <br />
 
 [![npm version](https://img.shields.io/npm/v/@luispmonteiro/memento-memory-mcp.svg?style=flat-square&color=cb3837&logo=npm&logoColor=white&label=npm)](https://www.npmjs.com/package/@luispmonteiro/memento-memory-mcp)
+[![Tests](https://img.shields.io/github/actions/workflow/status/lfrmonteiro99/memento-mcp/tests.yml?branch=master&style=flat-square&logo=github&label=tests)](https://github.com/lfrmonteiro99/memento-mcp/actions/workflows/tests.yml)
+[![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen?style=flat-square&logo=vitest&logoColor=white)](#testing)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-compatible-7c3aed?style=flat-square)](https://modelcontextprotocol.io)
@@ -54,6 +56,7 @@ memento-mcp ui
 - [Core features](#core-features)
 - [Knowledge model](#knowledge-model)
 - [Example use cases](#example-use-cases)
+- [Testing](#testing)
 - [License](#license)
 
 ---
@@ -534,6 +537,42 @@ Search and hooks can combine both layers.
 > **Preference:** In this project, bug fixes and improvements are tracked separately in release notes.
 >
 > **Scope:** team &nbsp;·&nbsp; **Tags:** `process`, `release-notes`
+
+---
+
+## Testing
+
+`memento-mcp` ships with **1,352 tests across 121 test files**, covering **91% of lines and 85% of branches**. The suite runs on Node 18, 20, and 22 in CI on every push and pull request.
+
+### Run the tests
+
+```bash
+npm install
+npm test                    # full suite, ~40s
+npm run test:watch          # watch mode for development
+npx vitest run --coverage   # generate the v8 coverage report
+```
+
+### What the suite covers
+
+| Layer | What's tested |
+|---|---|
+| **MCP server** | Spawns the built server, performs an MCP handshake over stdio, asserts every registered tool is callable end-to-end (`tests/integration/mcp-server-smoke.test.ts`). |
+| **Memory lifecycle** | Chained `store → search → get → update → link → graph → path → unlink → pin → timeline → delete → export → import` flow (`tests/integration/memory-lifecycle.test.ts`). |
+| **Privacy** | Pins the `<private>...</private>` redaction promise across every public output (search, list, get, timeline, FTS, sync), and verifies `reveal_private` opt-in + analytics (`tests/integration/privacy-invariants.test.ts`). |
+| **Vault** | Promotion → file write → re-index → vault search → `memory_get(vault:id)` round-trip (`tests/integration/vault-promotion-flow.test.ts`). |
+| **Tools** | Per-tool unit tests for `memory_*`, `decisions_log`, `pitfalls_log`, plus dedup, policy, and analytics paths (`tests/tools/`). |
+| **Hooks** | `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `SessionEnd` hook handlers (`tests/hooks/`). |
+| **Database** | Repos, migrations, FTS triggers, edges, sessions (`tests/db/`). |
+| **Engine** | Classifier, compressor, adaptive ranker, embeddings, vault parser/router/index, similarity, token estimator (`tests/engine/`). |
+| **Sync** | Canonical JSON serializer round-trips, push/pull, schema migration, secret scrubbing on the wire (`tests/sync/`). |
+| **Web inspector** | Every API route, edit-mode auth, pagination, security headers (`tests/server/`). |
+| **CLI** | Installer, uninstaller, all import formats (`tests/cli/`). |
+| **Regression** | v1-behavior compatibility for legacy users (`tests/regression/`). |
+
+### Coverage exclusions
+
+Process entry points (`src/index.ts`, `src/cli/main.ts`, the hook bin scripts) are excluded from the coverage denominator: they are exercised by integration tests via `spawnSync`, but v8 cannot track child-process coverage. The handlers and helpers they invoke are fully covered. See `vitest.config.ts` for the full list.
 
 ---
 
