@@ -38,16 +38,24 @@ describe("database", () => {
 
   it("tracks schema version via user_version", () => {
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(7);
+    expect(version).toBeGreaterThanOrEqual(9);
   });
 
   it("is idempotent — calling createDatabase twice on same path doesn't error", () => {
     db.close();
     const db2 = createDatabase(dbPath);
     const version = db2.pragma("user_version", { simple: true });
-    expect(version).toBe(7);
+    expect(version).toBeGreaterThanOrEqual(9);
     db2.close();
     db = createDatabase(dbPath); // re-open for afterEach
+  });
+
+  it("creates memory_edges table at v9 with composite PK and FKs", () => {
+    expect(db.pragma("user_version", { simple: true })).toBeGreaterThanOrEqual(9);
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>;
+    expect(tables.map(t => t.name)).toContain("memory_edges");
+    const cols = db.pragma("table_info(memory_edges)") as Array<{ name: string }>;
+    expect(cols.map(c => c.name).sort()).toEqual(["created_at", "edge_type", "from_memory_id", "to_memory_id", "weight"]);
   });
 
   it("creates FTS sync triggers", () => {
