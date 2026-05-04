@@ -218,4 +218,31 @@ describe("memory_search hybrid retrieval", () => {
     expect(result).toMatch(/deadlock howto/i);
     ctx.db.close();
   });
+
+  it("misconfigured provider in config does not propagate error", async () => {
+    const ctx = setupSearchableCtx();
+    ctx.store({ title: "deadlock howto", body: "deadlock body" });
+    const badConfig = {
+      ...ctx.config,
+      search: {
+        ...ctx.config.search,
+        embeddings: {
+          ...ctx.config.search.embeddings,
+          enabled: true,
+          provider: "nonexistent-provider" as any,
+        },
+      },
+    };
+    // Should not throw — falls back to FTS-only.
+    const result = await handleMemorySearch(
+      ctx.memRepo, badConfig,
+      { query: "deadlock", project_path: ctx.projectPath },
+      ctx.db,
+      undefined,
+      ctx.embRepo,
+      // No providerOverride — exercises the createProvider() throw path
+    );
+    expect(result).toMatch(/deadlock howto/i);
+    ctx.db.close();
+  });
 });

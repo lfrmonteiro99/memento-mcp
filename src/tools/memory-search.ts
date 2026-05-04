@@ -37,7 +37,13 @@ export async function handleMemorySearch(
 
   // Hybrid retrieval: RRF-merge FTS hits with cosine vector hits when provider and embRepo are available.
   let workingSet: any[];
-  const provider = providerOverride ?? (embRepo ? createProvider(config.search.embeddings) : null);
+  let provider: EmbeddingProvider | null = null;
+  try {
+    provider = providerOverride ?? (embRepo ? createProvider(config.search.embeddings) : null);
+  } catch {
+    // TOML misconfiguration (e.g. unsupported provider). Fall back to FTS-only.
+    provider = null;
+  }
 
   if (provider && embRepo) {
     try {
@@ -64,7 +70,7 @@ export async function handleMemorySearch(
         workingSet = raw;
       }
     } catch {
-      // Provider failed (e.g. model not installed). Fall through to FTS-only silently.
+      // Provider failed at runtime (e.g. model not installed). Fall through to FTS-only silently.
       workingSet = raw;
     }
   } else {
