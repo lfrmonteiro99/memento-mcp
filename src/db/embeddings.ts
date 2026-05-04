@@ -1,6 +1,6 @@
 // src/db/embeddings.ts
 import type Database from "better-sqlite3";
-import { floatToBlob, blobToFloat } from "../engine/embeddings/cosine.js";
+import { floatToBlob, blobToFloat, cosineSimilarity } from "../engine/embeddings/cosine.js";
 
 export class EmbeddingsRepo {
   constructor(private db: Database.Database) {}
@@ -57,6 +57,21 @@ export class EmbeddingsRepo {
       memoryId: r.memory_id,
       vector: blobToFloat(r.vector),
     }));
+  }
+
+  topKByCosine(
+    queryVec: Float32Array,
+    projectId: string | null,
+    model: string,
+    k: number,
+  ): Array<{ id: string; score: number }> {
+    const candidates = this.getByProject(projectId, model);
+    const scored = candidates.map((c) => ({
+      id: c.memoryId,
+      score: cosineSimilarity(queryVec, c.vector),
+    }));
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, k);
   }
 
   countMissing(model: string): number {

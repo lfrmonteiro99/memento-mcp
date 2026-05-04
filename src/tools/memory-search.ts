@@ -8,6 +8,9 @@ import { formatIndex, formatFull, formatSummary, formatVaultEntry, formatVaultIn
 import { estimateTokensV2 } from "../engine/token-estimator.js";
 import { searchVault } from "../engine/vault-router.js";
 import { EdgesRepo, type EdgeType, type Edge } from "../db/edges.js";
+import { reciprocalRankFusion } from "../engine/rrf.js";
+import { createProvider, type EmbeddingProvider } from "../engine/embeddings/provider.js";
+import type { EmbeddingsRepo } from "../db/embeddings.js";
 
 export async function handleMemorySearch(
   repo: MemoriesRepo,
@@ -21,6 +24,8 @@ export async function handleMemorySearch(
   },
   db?: Database.Database,
   analyticsTracker?: AnalyticsTracker,
+  embRepo?: EmbeddingsRepo,
+  providerOverride?: EmbeddingProvider,
 ): Promise<string> {
   const limit = params.limit ?? config.search.maxResults;
   const detail = params.detail ?? config.search.defaultDetail;
@@ -30,13 +35,49 @@ export async function handleMemorySearch(
     projectPath: params.project_path, memoryType: params.memory_type, limit,
   });
 
-  const rawRanks = raw.map(r => Math.abs(r.rank ?? 0));
+  // Hybrid retrieval: RRF-merge FTS hits with cosine vector hits when provider and embRepo are available.
+  let workingSet: any[];
+  const provider = providerOverride ?? (embRepo ? createProvider(config.search.embeddings) : null);
+
+  if (provider && embRepo) {
+    try {
+      const [queryVec] = await provider.embed([params.query]);
+      const projectId = params.project_path ? repo.ensureProject(params.project_path) : null;
+      const vecHits = embRepo.topKByCosine(queryVec, projectId, provider.model, limit * 2);
+      if (vecHits.length > 0) {
+        const ftsRanking = raw.map((r: any) => ({ id: r.id, score: Math.abs(r.rank ?? 0) }));
+        const vecRanking = vecHits.map(h => ({ id: h.id, score: h.score }));
+        const fused = reciprocalRankFusion([ftsRanking, vecRanking], { k: 60 });
+        const candidateIds = fused.slice(0, limit * 2).map(f => f.id);
+
+        // Build workingSet preserving fused order, fetching any vec-only ids from DB.
+        const idMap = new Map<string, any>();
+        for (const r of raw) idMap.set(r.id, r);
+        for (const id of candidateIds) {
+          if (!idMap.has(id)) {
+            const m = repo.getById(id);
+            if (m && !m.deleted_at) idMap.set(id, m);
+          }
+        }
+        workingSet = candidateIds.map(id => idMap.get(id)).filter(Boolean);
+      } else {
+        workingSet = raw;
+      }
+    } catch {
+      // Provider failed (e.g. model not installed). Fall through to FTS-only silently.
+      workingSet = raw;
+    }
+  } else {
+    workingSet = raw;
+  }
+
+  const rawRanks = workingSet.map((r: any) => Math.abs(r.rank ?? 0));
   const maxRank = Math.max(...rawRanks, 1);
-  for (const r of raw) {
+  for (const r of workingSet) {
     const normalizedRank = Math.abs(r.rank ?? 0) / maxRank;
     const baseScore = normalizedRank * 0.6 + (r.importance_score ?? 0.5) * 0.4;
     r.score = applyDecay(baseScore, r.last_accessed_at);
-    r.source = "sqlite";
+    r.source = r.source ?? "sqlite";
     sqliteResults.push(r);
   }
 

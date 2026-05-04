@@ -212,7 +212,7 @@ server.tool(
     edge_direction: z.enum(["outgoing", "incoming", "both"]).default("both"),
   },
   async (params) => ({
-    content: [{ type: "text" as const, text: await handleMemorySearch(memRepo, config, params, db, analyticsTracker) }],
+    content: [{ type: "text" as const, text: await handleMemorySearch(memRepo, config, params, db, analyticsTracker, embRepo) }],
   })
 );
 

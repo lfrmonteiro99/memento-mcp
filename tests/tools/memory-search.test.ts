@@ -5,8 +5,10 @@ import { randomUUID } from "node:crypto";
 import { createDatabase } from "../../src/db/database.js";
 import { MemoriesRepo } from "../../src/db/memories.js";
 import { EdgesRepo } from "../../src/db/edges.js";
+import { EmbeddingsRepo } from "../../src/db/embeddings.js";
 import { handleMemorySearch } from "../../src/tools/memory-search.js";
 import { DEFAULT_CONFIG } from "../../src/lib/config.js";
+import type { EmbeddingProvider } from "../../src/engine/embeddings/provider.js";
 
 function tmpDbPath(): string {
   return join(tmpdir(), `memento-search-test-${randomUUID()}.db`);
@@ -16,6 +18,7 @@ interface SearchCtx {
   db: ReturnType<typeof createDatabase>;
   memRepo: MemoriesRepo;
   edgeRepo: EdgesRepo;
+  embRepo: EmbeddingsRepo;
   config: typeof DEFAULT_CONFIG;
   projectPath: string;
   store(params: { title: string; body: string }): string;
@@ -25,6 +28,7 @@ function setupSearchableCtx(): SearchCtx {
   const db = createDatabase(tmpDbPath());
   const memRepo = new MemoriesRepo(db);
   const edgeRepo = new EdgesRepo(db);
+  const embRepo = new EmbeddingsRepo(db);
   const config = { ...DEFAULT_CONFIG, vault: { ...DEFAULT_CONFIG.vault, enabled: false } };
   const projectPath = "/tmp/test-project-" + randomUUID();
 
@@ -38,7 +42,7 @@ function setupSearchableCtx(): SearchCtx {
     });
   }
 
-  return { db, memRepo, edgeRepo, config, projectPath, store };
+  return { db, memRepo, edgeRepo, embRepo, config, projectPath, store };
 }
 
 describe("memory_search", () => {
@@ -137,6 +141,81 @@ describe("memory_search", () => {
       ctx.db,
     );
     expect(result).not.toMatch(/soft deleted ghost/i);
+    ctx.db.close();
+  });
+});
+
+describe("memory_search hybrid retrieval", () => {
+  it("backwards compat: no provider, no embRepo → identical output", async () => {
+    const ctx = setupSearchableCtx();
+    ctx.store({ title: "deadlock howto", body: "deadlock body" });
+
+    const without = await handleMemorySearch(
+      ctx.memRepo, ctx.config,
+      { query: "deadlock", project_path: ctx.projectPath },
+      ctx.db,
+    );
+    const withRepoUndefined = await handleMemorySearch(
+      ctx.memRepo, ctx.config,
+      { query: "deadlock", project_path: ctx.projectPath },
+      ctx.db,
+      undefined,
+      undefined,
+    );
+    expect(without).toBe(withRepoUndefined);
+    ctx.db.close();
+  });
+
+  it("hybrid retrieval: vector-only match surfaces alongside FTS hits", async () => {
+    const ctx = setupSearchableCtx();
+    const mFts = ctx.store({ title: "deadlock howto", body: "deadlock body" });
+    const mSemantic = ctx.store({ title: "lock contention guide", body: "different words entirely" });
+
+    ctx.embRepo.upsert(mFts, "test-model", new Float32Array([1.0, 0.0, 0.0, 0.0]));
+    ctx.embRepo.upsert(mSemantic, "test-model", new Float32Array([0.9, 0.4, 0.0, 0.0]));
+
+    const fakeProvider: EmbeddingProvider = {
+      model: "test-model",
+      dim: 4,
+      embed: async (texts) => texts.map(() => new Float32Array([1.0, 0.0, 0.0, 0.0])),
+    };
+
+    const result = await handleMemorySearch(
+      ctx.memRepo,
+      ctx.config,
+      { query: "deadlock", project_path: ctx.projectPath, detail: "summary" },
+      ctx.db,
+      undefined,
+      ctx.embRepo,
+      fakeProvider,
+    );
+
+    // FTS hit and vector-only hit both appear.
+    expect(result).toMatch(/deadlock howto/i);
+    expect(result).toMatch(/lock contention guide/i);
+    ctx.db.close();
+  });
+
+  it("provider failure falls back silently to FTS-only", async () => {
+    const ctx = setupSearchableCtx();
+    ctx.store({ title: "deadlock howto", body: "deadlock body" });
+
+    const failingProvider: EmbeddingProvider = {
+      model: "test-model",
+      dim: 4,
+      embed: async () => { throw new Error("boom"); },
+    };
+
+    // Must not throw; falls back to FTS result.
+    const result = await handleMemorySearch(
+      ctx.memRepo, ctx.config,
+      { query: "deadlock", project_path: ctx.projectPath },
+      ctx.db,
+      undefined,
+      ctx.embRepo,
+      failingProvider,
+    );
+    expect(result).toMatch(/deadlock howto/i);
     ctx.db.close();
   });
 });
