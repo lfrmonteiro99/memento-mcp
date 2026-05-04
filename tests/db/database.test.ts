@@ -183,4 +183,27 @@ describe("database", () => {
   it("user_version is at least 9 (v8 + v9 both applied)", () => {
     expect(db.pragma("user_version", { simple: true })).toBeGreaterThanOrEqual(9);
   });
+
+  it("creates memory_anchors table at v10", () => {
+    expect(db.pragma("user_version", { simple: true })).toBeGreaterThanOrEqual(10);
+    const cols = db.pragma("table_info(memory_anchors)") as Array<{ name: string }>;
+    expect(cols.map(c => c.name).sort()).toEqual([
+      "anchored_at", "commit_sha", "file_path", "id", "line_end", "line_start",
+      "memory_id", "stale_reason", "stale_since", "status",
+    ]);
+  });
+
+  it("memory_anchors enforces status check constraint", () => {
+    expect(() => {
+      // Need a real memory id (FK)
+      const projectId = db.prepare("SELECT id FROM projects LIMIT 1").get() as { id: string } | undefined;
+      const pid = projectId?.id ?? (() => {
+        db.prepare("INSERT INTO projects (id, name, root_path) VALUES ('p-anc', 'p', '/tmp/anc')").run();
+        return "p-anc";
+      })();
+      db.prepare("INSERT INTO memories (id, project_id, title, body) VALUES ('m-anc', ?, 't', 'b')").run(pid);
+      db.prepare("INSERT INTO memory_anchors (memory_id, file_path, status) VALUES (?, ?, ?)")
+        .run("m-anc", "x.ts", "bogus");
+    }).toThrow();
+  });
 });

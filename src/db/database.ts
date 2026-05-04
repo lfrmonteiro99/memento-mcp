@@ -405,6 +405,28 @@ END;
       `);
     },
   },
+  {
+    version: 10,
+    name: "memory_anchors",
+    sql: `
+CREATE TABLE IF NOT EXISTS memory_anchors (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  memory_id    TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  file_path    TEXT NOT NULL,
+  line_start   INTEGER,
+  line_end     INTEGER,
+  commit_sha   TEXT,
+  anchored_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  status       TEXT NOT NULL DEFAULT 'fresh' CHECK(status IN ('fresh','stale','anchor-deleted')),
+  stale_since  TEXT,
+  stale_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_anchors_memory ON memory_anchors(memory_id);
+CREATE INDEX IF NOT EXISTS idx_memory_anchors_file ON memory_anchors(file_path);
+CREATE INDEX IF NOT EXISTS idx_memory_anchors_status ON memory_anchors(status) WHERE status != 'fresh';
+`,
+  },
 ];
 
 const FTS_TRIGGERS_SQL = `
