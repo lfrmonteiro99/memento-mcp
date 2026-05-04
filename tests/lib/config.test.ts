@@ -70,6 +70,11 @@ describe("v2 config fields", () => {
     expect(DEFAULT_CONFIG.autoCapture.maxPerSession).toBe(20);
   });
 
+  it("includes Write, WebSearch, WebFetch, Glob in addition to Bash/Read/Grep/Edit", () => {
+    const tools = DEFAULT_CONFIG.autoCapture.tools;
+    expect(tools).toEqual(expect.arrayContaining(["Bash", "Read", "Grep", "Edit", "Write", "WebSearch", "WebFetch", "Glob"]));
+  });
+
   it("DEFAULT_CONFIG includes compression section with threshold=150", () => {
     expect(DEFAULT_CONFIG.compression).toBeDefined();
     expect(DEFAULT_CONFIG.compression.enabled).toBe(true);

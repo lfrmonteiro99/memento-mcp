@@ -83,7 +83,7 @@ async function main(): Promise<void> {
       dedup_similarity_threshold: acRaw?.dedupSimilarityThreshold ?? 0.7,
       max_per_session: acRaw?.maxPerSession ?? 20,
       default_importance: acRaw?.defaultImportance ?? 0.3,
-      tools: acRaw?.tools ?? ["Bash", "Read", "Grep", "Edit"],
+      tools: acRaw?.tools ?? ["Bash", "Read", "Grep", "Edit", "Write", "WebSearch", "WebFetch", "Glob"],
       session_timeout_seconds: acRaw?.sessionTimeoutSeconds ?? 3600,
     };
 

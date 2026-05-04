@@ -226,7 +226,7 @@ export const DEFAULT_CONFIG: Config = {
     dedupSimilarityThreshold: 0.7,
     maxPerSession: 20,
     defaultImportance: 0.3,
-    tools: ["Bash", "Read", "Grep", "Edit"],
+    tools: ["Bash", "Read", "Grep", "Edit", "Write", "WebSearch", "WebFetch", "Glob"],
     sessionTimeoutSeconds: 3600,
   },
   compression: {
