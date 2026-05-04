@@ -197,7 +197,8 @@ server.tool(
     "Layer 2: detail='summary' — preview body, ~80t per result. Use to shortlist.",
     "Layer 3: detail='full' — full body, ~150-300t per result. Use sparingly.",
     "For chronological context around one hit, prefer memory_timeline(id) — ~200t per neighbor.",
-    "For one full body, prefer memory_get(id) — ~300-800t."
+    "For one full body, prefer memory_get(id) — ~300-800t.",
+    "include_edges=true also surfaces 1-hop typed neighbours of each hit, useful for tracing causal chains."
   ].join(" "),
   {
     query: z.string(),
@@ -206,6 +207,9 @@ server.tool(
     limit: z.number().default(10),
     detail: z.enum(["index", "summary", "full"]).default("index"),
     include_file_memories: z.boolean().default(true),
+    include_edges: z.boolean().default(false),
+    edge_types: z.array(z.enum(["causes", "fixes", "supersedes", "contradicts", "derives_from", "relates_to"])).optional(),
+    edge_direction: z.enum(["outgoing", "incoming", "both"]).default("both"),
   },
   async (params) => ({
     content: [{ type: "text" as const, text: await handleMemorySearch(memRepo, config, params, db, analyticsTracker) }],

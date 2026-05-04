@@ -7,6 +7,7 @@ import { searchFileMemories } from "../lib/file-memory.js";
 import { formatIndex, formatFull, formatSummary, formatVaultEntry, formatVaultIndex } from "../lib/formatter.js";
 import { estimateTokensV2 } from "../engine/token-estimator.js";
 import { searchVault } from "../engine/vault-router.js";
+import { EdgesRepo, type EdgeType, type Edge } from "../db/edges.js";
 
 export async function handleMemorySearch(
   repo: MemoriesRepo,
@@ -14,6 +15,9 @@ export async function handleMemorySearch(
   params: {
     query: string; project_path?: string; memory_type?: string;
     limit?: number; detail?: "index" | "summary" | "full"; include_file_memories?: boolean;
+    include_edges?: boolean;
+    edge_types?: EdgeType[];
+    edge_direction?: "outgoing" | "incoming" | "both";
   },
   db?: Database.Database,
   analyticsTracker?: AnalyticsTracker,
@@ -49,6 +53,72 @@ export async function handleMemorySearch(
     ? searchVault(db, config.vault, params.query)
     : [];
 
+  // Edge-neighbours pass — additive; only runs when explicitly requested.
+  type EdgeNeighbour = {
+    hit_id: string;
+    hit_title: string;
+    arrow: "→" | "←";
+    edge_type: EdgeType;
+    weight: number;
+    neighbour: any;
+  };
+  let edgeNeighbours: EdgeNeighbour[] = [];
+
+  if (params.include_edges && db) {
+    const edgeRepo = new EdgesRepo(db);
+    const direction = params.edge_direction ?? "both";
+    const filterTypes = params.edge_types;
+    const seen = new Set<string>(
+      limitedSqlite.filter((r: any) => r.id).map((r: any) => r.id as string)
+    );
+
+    const collect = (
+      hit: any,
+      edges: Edge[],
+      arrow: "→" | "←",
+      neighbourSide: "from" | "to",
+    ) => {
+      for (const e of edges) {
+        const neighbourId = neighbourSide === "to" ? e.to_memory_id : e.from_memory_id;
+        if (seen.has(neighbourId)) continue;
+        const m = repo.getById(neighbourId);
+        if (!m || m.deleted_at) continue;
+        seen.add(neighbourId);
+        edgeNeighbours.push({
+          hit_id: hit.id,
+          hit_title: hit.title,
+          arrow,
+          edge_type: e.edge_type,
+          weight: e.weight,
+          neighbour: m,
+        });
+      }
+    };
+
+    const queryByTypes = (
+      hit: any,
+      fn: (memId: string, et?: EdgeType) => Edge[],
+      arrow: "→" | "←",
+      neighbourSide: "from" | "to",
+    ) => {
+      if (filterTypes && filterTypes.length > 0) {
+        for (const t of filterTypes) collect(hit, fn(hit.id, t), arrow, neighbourSide);
+      } else {
+        collect(hit, fn(hit.id), arrow, neighbourSide);
+      }
+    };
+
+    for (const hit of limitedSqlite) {
+      if (!hit.id) continue; // file-memory results may not have a DB id
+      if (direction === "outgoing" || direction === "both") {
+        queryByTypes(hit, edgeRepo.outgoing.bind(edgeRepo), "→", "to");
+      }
+      if (direction === "incoming" || direction === "both") {
+        queryByTypes(hit, edgeRepo.incoming.bind(edgeRepo), "←", "from");
+      }
+    }
+  }
+
   // Format SQLite/file results
   let output = "";
   if (detail === "index") output = formatIndex(limitedSqlite);
@@ -63,6 +133,17 @@ export async function handleMemorySearch(
     output = output && output !== "No results found."
       ? output + "\n\n" + vaultSection
       : vaultSection;
+  }
+
+  // Append edge-neighbour section
+  if (edgeNeighbours.length > 0) {
+    const lines = edgeNeighbours.map(en =>
+      `  ${en.arrow} [${en.edge_type}, w=${en.weight.toFixed(2)}] ${en.neighbour.id} ${en.neighbour.title} (edge neighbour of ${en.hit_id} ${en.hit_title})`
+    ).join("\n");
+    const section = `\n\nEdge neighbours (${edgeNeighbours.length}):\n${lines}`;
+    output = output && output !== "No results found."
+      ? output + section
+      : section.trim();
   }
 
   const finalOutput = output || "No results found.";
