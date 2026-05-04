@@ -125,6 +125,49 @@ describe("EmbeddingsRepo", () => {
   });
 });
 
+describe("EmbeddingsRepo project-scoped backfill queries", () => {
+  let db: ReturnType<typeof createDatabase>;
+  let memRepo: MemoriesRepo;
+  let embRepo: EmbeddingsRepo;
+  let projectA: string;
+  let projectB: string;
+  const dbPath = join(tmpdir(), `memento-proj-scoped-test-${process.pid}-${randomUUID()}.sqlite`);
+
+  beforeEach(() => {
+    db = createDatabase(dbPath);
+    memRepo = new MemoriesRepo(db);
+    embRepo = new EmbeddingsRepo(db);
+    projectA = memRepo.ensureProject("/tmp/projA");
+    projectB = memRepo.ensureProject("/tmp/projB");
+
+    memRepo.store({ title: "A1", body: "a1", memoryType: "fact", scope: "project", projectId: projectA });
+    memRepo.store({ title: "A2", body: "a2", memoryType: "fact", scope: "project", projectId: projectA });
+    memRepo.store({ title: "B1", body: "b1", memoryType: "fact", scope: "project", projectId: projectB });
+  });
+  afterEach(() => { db.close(); rmSync(dbPath, { force: true }); });
+
+  it("countMissing without projectId counts all", () => {
+    expect(embRepo.countMissing("test-model")).toBe(3);
+  });
+
+  it("countMissing with projectId scopes to that project", () => {
+    expect(embRepo.countMissing("test-model", projectA)).toBe(2);
+    expect(embRepo.countMissing("test-model", projectB)).toBe(1);
+  });
+
+  it("iterateMissing with projectId scopes to that project", () => {
+    const ids = Array.from(embRepo.iterateMissing("test-model", 10, projectA)).map(m => m.id);
+    expect(ids.length).toBe(2);
+    expect(ids.sort()).toEqual(ids.sort());
+  });
+
+  it("countMissing with projectId still excludes already-embedded", () => {
+    const id = memRepo.store({ title: "A3", body: "a3", memoryType: "fact", scope: "project", projectId: projectA });
+    embRepo.upsert(id, "test-model", new Float32Array([1, 0, 0, 0]));
+    expect(embRepo.countMissing("test-model", projectA)).toBe(2); // A1 and A2, not A3
+  });
+});
+
 describe("EmbeddingsRepo.topKByCosine", () => {
   let db: ReturnType<typeof createDatabase>;
   let memRepo: MemoriesRepo;
