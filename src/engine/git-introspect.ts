@@ -8,20 +8,30 @@
 // been moved, branches that have been pruned, or files that have been deleted.
 
 import { execFileSync } from "node:child_process";
+import { createLogger, logLevelFromEnv } from "../lib/logger.js";
+
+const logger = createLogger(logLevelFromEnv());
 
 interface RunOpts {
   allowFail?: boolean;
 }
 
-/** Run git with argv-array form (no shell quoting bugs). */
+/** Run git with argv-array form (no shell quoting bugs).
+ * On failure with allowFail=true, captures stderr to the debug log so silently-wrong
+ * staleness verdicts can be diagnosed without re-running. */
 function git(cwd: string, args: string[], opts: RunOpts = {}): string {
   try {
     return execFileSync("git", args, {
       cwd,
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "pipe"],
     }).toString("utf-8");
   } catch (e) {
-    if (opts.allowFail) return "";
+    if (opts.allowFail) {
+      const err = e as { stderr?: Buffer; status?: number };
+      const stderr = err.stderr?.toString("utf-8").trim() ?? "";
+      logger.debug(`git ${args.join(" ")} failed in ${cwd} (exit ${err.status}): ${stderr || "(no stderr)"}`);
+      return "";
+    }
     throw e;
   }
 }

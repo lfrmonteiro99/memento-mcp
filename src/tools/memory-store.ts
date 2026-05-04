@@ -29,8 +29,14 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
   persist_to_vault?: boolean; vault_mode?: "create" | "create_or_update";
   vault_kind?: string; vault_folder?: string; vault_note_title?: string;
   dedup?: "strict" | "warn" | "off";
-  /** P4 Task 5: pin the memory to one or more code locations. commit_sha is
-   *  auto-populated when project_path is a git working tree. */
+  /** P4 Task 5: pin the memory to one or more code locations.
+   *
+   * commit_sha is auto-populated to the project's HEAD at store time and used
+   * later as the upper bound for "changes that count": lines whose blame chunk
+   * is an ancestor of this sha are considered fresh, lines from newer commits
+   * trigger staleness. The same sha is applied to every anchor in the batch
+   * (not the file's last-modifying commit) — this trades precision for
+   * predictability and avoids per-anchor `git log` calls on the hot path. */
   anchors?: AnchorInput[];
 }, db?: Database.Database, config?: Config, embRepo?: EmbeddingsRepo, providerOverride?: EmbeddingProvider): Promise<string> {
   // Issue #4: validate balanced <private> tags before storing.

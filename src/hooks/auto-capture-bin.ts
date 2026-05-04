@@ -110,6 +110,12 @@ async function main(): Promise<void> {
       utility_window_minutes: (rawConfig as any).adaptive?.utility_window_minutes ?? 10,
     });
 
+    // R2: flush analytics BEFORE the optional anchor-staleness pass below.
+    // Pipeline 3 spawns synchronous git invocations that can take 10s of ms
+    // each; flushing here prevents analytics loss if SIGKILL hits during git
+    // and keeps the hot-path commit cheap when anchorStaleness is off.
+    try { tracker.flush(); } catch { /* ignore */ }
+
     // Pipeline 3 (P4 Task 8): opt-in anchor-staleness check.
     // OFF by default — `processAnchorStaleness` is a no-op when enabled=false.
     const filePath = typeof toolInput.file_path === "string" ? toolInput.file_path : undefined;
@@ -120,7 +126,7 @@ async function main(): Promise<void> {
       filePath,
     });
   } finally {
-    // R2: flush analytics before exit so no events are lost to SIGKILL.
+    // Idempotent: tracker.flush() short-circuits when there's nothing buffered.
     try { tracker.flush(); } catch { /* ignore */ }
     try { db.close(); } catch { /* ignore */ }
   }
