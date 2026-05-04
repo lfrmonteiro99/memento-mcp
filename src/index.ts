@@ -22,6 +22,7 @@ import { handleMemoryCompress } from "./tools/memory-compress.js";
 import { handleMemoryUpdate } from "./tools/memory-update.js";
 import { handleMemoryPin } from "./tools/memory-pin.js";
 import { handleMemoryEdgeCreate } from "./tools/memory-edge-create.js";
+import { handleMemoryEdgeTraverse } from "./tools/memory-edge-traverse.js";
 import { handleMemoryExport, handleMemoryImport } from "./tools/memory-transfer.js";
 import { AnalyticsTracker, installFlushOnExit } from "./analytics/tracker.js";
 import { cleanupExpiredAnalytics } from "./analytics/retention.js";
@@ -397,6 +398,19 @@ server.tool(
   },
   async (params) => ({
     content: [{ type: "text" as const, text: await handleMemoryEdgeCreate(memRepo, db, params) }],
+  })
+);
+
+server.tool(
+  "memory_edge_traverse",
+  "List 1-hop typed neighbours of a memory. Direction: outgoing/incoming/both (default both). Optional edge_types filter narrows by edge type. Skips soft-deleted neighbours. Useful for tracing causal chains and fix relationships.",
+  {
+    memory_id: z.string(),
+    edge_types: z.array(z.enum(["causes", "fixes", "supersedes", "contradicts", "derives_from", "relates_to"])).optional(),
+    direction: z.enum(["outgoing", "incoming", "both"]).default("both"),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryEdgeTraverse(memRepo, db, params) }],
   })
 );
 
