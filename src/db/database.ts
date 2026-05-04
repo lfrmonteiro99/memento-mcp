@@ -366,6 +366,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_edges_from ON memory_edges(from_memory_id)
 CREATE INDEX IF NOT EXISTS idx_memory_edges_to   ON memory_edges(to_memory_id);
 CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type);
 
+-- Append-only mirror: edges are not auto-removed when supersedes_memory_id is cleared.
 -- Mirror legacy supersedes_memory_id column into memory_edges so existing rows surface.
 CREATE TRIGGER IF NOT EXISTS memories_supersedes_ai AFTER INSERT ON memories
 WHEN new.supersedes_memory_id IS NOT NULL BEGIN
@@ -383,8 +384,10 @@ END;
       // Backfill: existing rows with supersedes_memory_id get a memory_edges row.
       db.exec(`
         INSERT OR IGNORE INTO memory_edges(from_memory_id, to_memory_id, edge_type, weight)
-        SELECT id, supersedes_memory_id, 'supersedes', 1.0
-        FROM memories WHERE supersedes_memory_id IS NOT NULL
+        SELECT m.id, m.supersedes_memory_id, 'supersedes', 1.0
+        FROM memories m
+        INNER JOIN memories target ON target.id = m.supersedes_memory_id
+        WHERE m.supersedes_memory_id IS NOT NULL
       `);
     },
   },
