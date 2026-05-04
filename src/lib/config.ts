@@ -134,6 +134,11 @@ export interface Config {
     cacheTtlSeconds: number;
     enabled: boolean;
   };
+  /** P4 Task 8: opt-in PostToolUse anchor-staleness check on Edit/Write. */
+  anchorStaleness: {
+    enabled: boolean;
+    debounceMs: number;
+  };
 }
 
 export const DEFAULT_VAULT_CONFIG: VaultConfig = {
@@ -264,6 +269,10 @@ export const DEFAULT_CONFIG: Config = {
   fileMemory: {
     cacheTtlSeconds: 60,
     enabled: true,
+  },
+  anchorStaleness: {
+    enabled: false,
+    debounceMs: 5000,
   },
 };
 
@@ -420,6 +429,11 @@ export function loadConfig(configPath: string): Config {
   if (toml.file_memory) {
     if (toml.file_memory.cache_ttl_seconds != null) config.fileMemory.cacheTtlSeconds = Number(toml.file_memory.cache_ttl_seconds);
     if (toml.file_memory.enabled != null) config.fileMemory.enabled = Boolean(toml.file_memory.enabled);
+  }
+  if (toml.anchor_staleness) {
+    const a = toml.anchor_staleness;
+    if (a.enabled != null) config.anchorStaleness.enabled = Boolean(a.enabled);
+    if (a.debounce_ms != null) config.anchorStaleness.debounceMs = Number(a.debounce_ms);
   }
   if (toml.sync) {
     const s = toml.sync;

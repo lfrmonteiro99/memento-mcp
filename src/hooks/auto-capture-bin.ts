@@ -17,6 +17,7 @@ import { loadConfig, getDefaultConfigPath, getDefaultDbPath } from "../lib/confi
 import { processAutoCapture, AutoCaptureConfig } from "./auto-capture.js";
 import { stringifyToolResponse, scrubSecrets } from "../engine/text-utils.js";
 import { processUtilitySignals } from "./utility-signal.js";
+import { processAnchorStaleness } from "./anchor-staleness.js";
 
 async function main(): Promise<void> {
   // Read the PostToolUse event from stdin
@@ -107,6 +108,16 @@ async function main(): Promise<void> {
       tool_input: toolInput,
       tool_response_text: toolResponseText,
       utility_window_minutes: (rawConfig as any).adaptive?.utility_window_minutes ?? 10,
+    });
+
+    // Pipeline 3 (P4 Task 8): opt-in anchor-staleness check.
+    // OFF by default — `processAnchorStaleness` is a no-op when enabled=false.
+    const filePath = typeof toolInput.file_path === "string" ? toolInput.file_path : undefined;
+    processAnchorStaleness(db, {
+      enabled: rawConfig.anchorStaleness?.enabled === true,
+      cwd,
+      toolName,
+      filePath,
     });
   } finally {
     // R2: flush analytics before exit so no events are lost to SIGKILL.
