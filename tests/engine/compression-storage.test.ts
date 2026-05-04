@@ -198,6 +198,39 @@ describe("runCompressionCycle (R5 atomic pipeline)", () => {
     expect(logCount.c).toBe(compressed.length);
   });
 
+  it("P3 Task 3: applyCompression emits derives_from edges to each source memory", () => {
+    const projectPath = "/edges-proj";
+    const projectId = memRepo.ensureProject(projectPath);
+
+    const sourceIds: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      sourceIds.push(memRepo.store({
+        title: `Edit: payments.ts step ${i}`,
+        body: `Refactored payments.ts handler ${i} for retry semantics`,
+        memoryType: "fact",
+        scope: "project",
+        projectPath,
+        tags: ["edit", "payments"],
+      }));
+    }
+
+    const { compressed } = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
+    expect(compressed.length).toBeGreaterThanOrEqual(1);
+
+    // Find the new compression memory.
+    const newMem = db.prepare(
+      "SELECT id FROM memories WHERE source = 'compression' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1",
+    ).get() as { id: string };
+    expect(newMem).toBeDefined();
+
+    const edges = db.prepare(
+      "SELECT to_memory_id FROM memory_edges WHERE from_memory_id = ? AND edge_type = 'derives_from'",
+    ).all(newMem.id) as Array<{ to_memory_id: string }>;
+    const edgeTargets = edges.map(e => e.to_memory_id).sort();
+    const sourcesInResult = compressed[0].source_memory_ids.sort();
+    expect(edgeTargets).toEqual(sourcesInResult);
+  });
+
   it("P0 Task 6: prunes auto-capture clusters whose median quality_score is below qualityFloor", () => {
     const projectPath = "/lowq-proj";
     const projectId = memRepo.ensureProject(projectPath);

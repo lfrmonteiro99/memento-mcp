@@ -487,7 +487,16 @@ export function applyCompression(db: Database.Database, result: CompressionResul
     const softDelete = db.prepare(
       "UPDATE memories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
     );
+    // P3 Task 3: emit derives_from edge from compressed → source. Direct insert
+    // (rather than EdgesRepo.create) keeps the operation inside this transaction
+    // and avoids the validation overhead — the edge_type is a string literal we
+    // control here, and the table's CHECK constraint enforces the enum.
+    const edgeInsert = db.prepare(
+      `INSERT OR IGNORE INTO memory_edges(from_memory_id, to_memory_id, edge_type, weight)
+       VALUES (?, ?, 'derives_from', 1.0)`,
+    );
     for (const sourceId of result.source_memory_ids) {
+      edgeInsert.run(id, sourceId);
       softDelete.run(now, sourceId);
     }
   });
