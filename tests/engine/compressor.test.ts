@@ -12,6 +12,7 @@ import {
   type MemoryRecord,
 } from "../../src/engine/compressor.js";
 import { createDatabase } from "../../src/db/database.js";
+import { setClock, resetClock } from "../../src/lib/decay.js";
 
 const makeMemory = (
   id: string,
@@ -144,6 +145,48 @@ describe("clusterMemories", () => {
       }),
     ];
     expect(clusterMemories(memories, config).length).toBe(0);
+  });
+
+  it("P3 Task 2: excludes memories above decay_floor (recent rows still being iterated)", () => {
+    // Freeze clock at 2026-05-04 so daysSince is deterministic.
+    setClock(() => new Date("2026-05-04T12:00:00Z").getTime());
+    try {
+      const recent = [
+        makeMemory("r1", "Edit: foo.ts (recent)", "deadlock pattern", ["edit"], "2026-05-01T10:00:00Z"),
+        makeMemory("r2", "Edit: foo.ts (recent)", "deadlock pattern again", ["edit"], "2026-05-02T10:00:00Z"),
+        makeMemory("r3", "Edit: foo.ts (recent)", "deadlock pattern reappears", ["edit"], "2026-05-03T10:00:00Z"),
+      ];
+      // Old memories: 50+ days old → exponential decay halflife=14 → ~0.085
+      const old = [
+        makeMemory("o1", "Edit: foo.ts (old)", "deadlock pattern", ["edit"], "2026-03-10T10:00:00Z"),
+        makeMemory("o2", "Edit: foo.ts (old)", "deadlock pattern again", ["edit"], "2026-03-11T10:00:00Z"),
+        makeMemory("o3", "Edit: foo.ts (old)", "deadlock pattern reappears", ["edit"], "2026-03-12T10:00:00Z"),
+      ];
+      const cfg = { ...DEFAULT_COMPRESSION_CONFIG, decay_floor: 0.6 };
+      const clusters = clusterMemories([...recent, ...old], cfg);
+
+      // Recents have decay ~0.86 (>0.6) → excluded; only old form a cluster.
+      expect(clusters).toHaveLength(1);
+      const ids = clusters[0].memories.map(m => m.id).sort();
+      expect(ids).toEqual(["o1", "o2", "o3"]);
+    } finally {
+      resetClock();
+    }
+  });
+
+  it("decay_floor undefined → no filter (backward compatible)", () => {
+    setClock(() => new Date("2026-05-04T12:00:00Z").getTime());
+    try {
+      const memories = [
+        makeMemory("r1", "Edit: foo.ts", "deadlock pattern", ["edit"], "2026-05-01T10:00:00Z"),
+        makeMemory("r2", "Edit: foo.ts", "deadlock pattern again", ["edit"], "2026-05-02T10:00:00Z"),
+      ];
+      const clusters = clusterMemories(memories, DEFAULT_COMPRESSION_CONFIG);
+      // The default config no longer carries decay_floor — recent memories still cluster.
+      expect(clusters.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      resetClock();
+    }
   });
 });
 

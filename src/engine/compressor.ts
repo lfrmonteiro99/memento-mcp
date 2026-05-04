@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { jaccardSimilarity, trigramSimilarity } from "./similarity.js";
 import { estimateTokensV2 } from "./token-estimator.js";
+import { computeExponentialDecay, daysSince } from "../lib/decay.js";
 
 export interface MemoryRecord {
   id: string;
@@ -34,6 +35,11 @@ export interface CompressionConfig {
    * soft-deleted instead of merged. Only auto-capture rows carry quality
    * scores; user rows default to 0.5 and are unaffected by typical floors. */
   qualityFloor?: number;
+  /** P3 Task 2: only consider memories whose exponential decay (halflife=14d)
+   * is at or below this floor. Default is undefined → no filter (legacy
+   * on-demand `memory_compress` runs unaffected). The scheduler sets it to
+   * 0.6 (~10+ days old) so still-being-iterated rows aren't consolidated. */
+  decay_floor?: number;
 }
 
 export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
@@ -112,8 +118,14 @@ export function clusterMemories(
   memories: MemoryRecord[],
   config: CompressionConfig,
 ): CompressionCluster[] {
+  const decayFloor = config.decay_floor;
   const input = memories
     .filter(m => m.source !== "compression")
+    // P3 Task 2: when decay_floor is set, exclude rows whose exponential decay
+    // (halflife=14d) is still above the floor — those are recent enough that
+    // the user is likely still iterating and consolidation would be premature.
+    .filter(m => decayFloor === undefined
+      || computeExponentialDecay(daysSince(m.created_at), 14) <= decayFloor)
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, MAX_CLUSTERING_MEMORIES);
 
