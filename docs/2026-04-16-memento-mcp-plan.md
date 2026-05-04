@@ -6,7 +6,7 @@
 
 **Architecture:** MCP server over stdio using @modelcontextprotocol/sdk. SQLite via better-sqlite3 with FTS5 full-text search. Hooks as standalone bin entry points. Config via TOML with env override.
 
-**Tech Stack:** TypeScript, Node.js >=18, better-sqlite3, smol-toml, vitest, tsup
+**Tech Stack:** TypeScript, Node.js >=20, better-sqlite3, smol-toml, vitest, tsup
 
 **Spec:** `docs/2026-04-16-memento-mcp-design.md`
 

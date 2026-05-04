@@ -1,0 +1,222 @@
+---
+const segments = [
+  { label: 'CLAUDE.md re-injected', tokens: 1500, color: 'var(--color-accent-3)' },
+  { label: 'Architecture re-explained', tokens: 500, color: 'var(--color-accent-2)' },
+  { label: 'Pitfall re-discovery', tokens: 300, color: '#f7c948' },
+  { label: 'Recap / status', tokens: 400, color: '#ff8a65' },
+];
+
+const totalBefore = segments.reduce((s, x) => s + x.tokens, 0); // 2700
+const totalAfter = 360;
+const savedPerSession = totalBefore - totalAfter; // 2340
+const withPct = Math.round((totalAfter / totalBefore) * 1000) / 10; // 13.3
+
+const breakdown = [
+  { label: 'CLAUDE.md re-injected', before: 1500, after: 0 },
+  { label: 'Architecture re-explained', before: 500, after: 80 },
+  { label: 'Pitfall re-discovered', before: 300, after: 80 },
+  { label: 'End-of-session recap', before: 400, after: 200 },
+];
+---
+
+<section id="savings" class="container-x py-[clamp(72px,11vw,128px)] divider-dashed">
+  <div class="section-tag" data-anim="fade-up">// the receipts</div>
+  <h2
+    class="text-[clamp(28px,4.4vw,48px)] font-bold leading-[1.08] max-w-[24ch] mb-[14px]"
+    style="letter-spacing: -.022em;"
+    data-anim="fade-up"
+  >
+    Your context window is not a buffet. <span class="grad-text">Stop loading the salad bar</span>.
+  </h2>
+  <p class="m-0 mb-9 max-w-[60ch] text-[clamp(15px,1.5vw,17px)]" style="color: var(--color-fg-soft);" data-anim="fade-up">
+    Without memory, every session opens with the same ~{totalBefore.toLocaleString()}-token monologue —
+    re-pasted READMEs, half-remembered decisions, and "as we discussed last Tuesday".
+    <span style="color: var(--color-fg);">Memento serves only the slice your agent actually needs.</span>
+    About {totalAfter} tokens. Same recall, less performance art.
+  </p>
+
+  <!-- Headline counter + comparison -->
+  <div class="savings-hero card-base p-[clamp(20px,3.2vw,36px)] mb-6" data-anim="fade-up">
+    <div class="flex items-baseline justify-between flex-wrap gap-3">
+      <div class="text-[12px]" style="font-family: var(--font-mono); color: var(--color-fg-mute); letter-spacing: .04em;">
+        // saved per session · conservative
+      </div>
+      <div class="text-[12px]" style="font-family: var(--font-mono); color: var(--color-fg-dim); letter-spacing: .04em;">
+        {totalBefore.toLocaleString()} → {totalAfter} tokens
+      </div>
+    </div>
+
+    <div class="mt-3 flex items-baseline gap-3 flex-wrap">
+      <span
+        class="grad-text font-extrabold tabular-nums leading-[0.95]"
+        style="font-size: clamp(64px, 12vw, 132px); letter-spacing: -.04em;"
+        data-count-to={savedPerSession}
+        aria-live="polite"
+      >0</span>
+      <span class="text-[clamp(16px,2vw,22px)] font-semibold" style="color: var(--color-fg-soft);">
+        tokens · every single session
+      </span>
+    </div>
+
+    <!-- comparison bars -->
+    <div class="mt-8 grid gap-[20px]">
+      <div class="bar-row">
+        <div class="bar-row-head">
+          <span class="bar-row-name">Without Memento</span>
+          <span class="bar-row-value tabular-nums" data-count-to={totalBefore} data-count-suffix=" t">0 t</span>
+        </div>
+        <div class="bar-track" aria-hidden="true">
+          <div class="bar-fill bar-fill-large" data-bar-target="100">
+            {segments.map((s) => (
+              <div
+                class="bar-seg"
+                style={`flex-grow: ${s.tokens}; background: linear-gradient(180deg, ${s.color}, color-mix(in oklab, ${s.color} 75%, transparent));`}
+                title={`${s.label} · ~${s.tokens} tokens`}
+              >
+                <span class="bar-seg-label">{s.label.split(' ')[0]} · {s.tokens.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div class="bar-row">
+        <div class="bar-row-head">
+          <span class="bar-row-name" style="color: var(--color-accent);">With Memento</span>
+          <span class="bar-row-value tabular-nums" data-count-to={totalAfter} data-count-suffix=" t">0 t</span>
+        </div>
+        <div class="bar-track" aria-hidden="true">
+          <div class="bar-fill bar-fill-small" data-bar-target={withPct}></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- breakdown table (semantic + visible) -->
+    <details class="savings-breakdown mt-7">
+      <summary>
+        <span>see the breakdown</span>
+        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" class="caret">
+          <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </summary>
+      <table class="breakdown-table">
+        <thead>
+          <tr>
+            <th scope="col">Where the tokens go</th>
+            <th scope="col" class="num">Without</th>
+            <th scope="col" class="num">With</th>
+            <th scope="col" class="num">Saved</th>
+          </tr>
+        </thead>
+        <tbody>
+          {breakdown.map((r) => (
+            <tr>
+              <td>{r.label}</td>
+              <td class="num tabular-nums">~{r.before.toLocaleString()}</td>
+              <td class="num tabular-nums">{r.after === 0 ? '0' : '~' + r.after.toLocaleString()}</td>
+              <td class="num tabular-nums saved">~{(r.before - r.after).toLocaleString()}</td>
+            </tr>
+          ))}
+          <tr class="total">
+            <td>Per-session prelude</td>
+            <td class="num tabular-nums">~{totalBefore.toLocaleString()}</td>
+            <td class="num tabular-nums">~{totalAfter.toLocaleString()}</td>
+            <td class="num tabular-nums saved">~{savedPerSession.toLocaleString()}</td>
+          </tr>
+        </tbody>
+      </table>
+    </details>
+  </div>
+
+  <!-- scaling cards -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-[14px]">
+    <div class="card-base scale-card p-[clamp(18px,2.6vw,28px)]" data-anim="fade-up">
+      <div class="text-[12px]" style="font-family: var(--font-mono); color: var(--color-fg-mute); letter-spacing: .04em;">
+        // solo dev · ~80 sessions / month
+      </div>
+      <div class="mt-2 flex items-baseline gap-2 flex-wrap">
+        <span
+          class="grad-text font-extrabold tabular-nums leading-none"
+          style="font-size: clamp(40px, 6vw, 64px); letter-spacing: -.03em;"
+          data-count-to="190000"
+        >0</span>
+        <span class="text-[14px] font-semibold" style="color: var(--color-fg-soft);">tokens / month</span>
+      </div>
+      <p class="m-0 mt-2 text-[13px]" style="color: var(--color-fg-mute);">
+        Roughly 4 sessions a day, every working day, that you don't pay to re-explain.
+      </p>
+    </div>
+    <div class="card-base scale-card p-[clamp(18px,2.6vw,28px)]" data-anim="fade-up">
+      <div class="text-[12px]" style="font-family: var(--font-mono); color: var(--color-fg-mute); letter-spacing: .04em;">
+        // 5-person team · ~400 sessions / month
+      </div>
+      <div class="mt-2 flex items-baseline gap-2 flex-wrap">
+        <span
+          class="grad-text font-extrabold tabular-nums leading-none"
+          style="font-size: clamp(40px, 6vw, 64px); letter-spacing: -.03em;"
+          data-count-to="940000"
+        >0</span>
+        <span class="text-[14px] font-semibold" style="color: var(--color-fg-soft);">tokens / month</span>
+      </div>
+      <p class="m-0 mt-2 text-[13px]" style="color: var(--color-fg-mute);">
+        Nearly a million tokens of pure prelude, recovered. Spend them on actual code.
+      </p>
+    </div>
+  </div>
+
+  <p class="mt-5 text-[12.5px]" style="font-family: var(--font-mono); color: var(--color-fg-dim); letter-spacing: .02em;" data-anim="fade-up">
+    // numbers deliberately conservative. real <code class="inline-code">CLAUDE.md</code> files routinely hit 3–5k tokens. savings scale with project age.
+  </p>
+</section>
+
+<script>
+  import { animate, inView } from 'motion';
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const fmt = new Intl.NumberFormat();
+
+  const root = document.getElementById('savings');
+  if (root) {
+    // count-up
+    const counters = root.querySelectorAll<HTMLElement>('[data-count-to]');
+    counters.forEach((el) => {
+      const to = Number(el.dataset.countTo);
+      const suffix = el.dataset.countSuffix ?? '';
+      const setVal = (n: number) => { el.textContent = fmt.format(n) + suffix; };
+
+      if (reduced) {
+        setVal(to);
+        return;
+      }
+      setVal(0);
+      // pick a duration that scales with magnitude so big numbers don't blur past
+      const duration = to >= 100_000 ? 1.8 : to >= 10_000 ? 1.5 : 1.2;
+      inView(el, () => {
+        animate(0, to, {
+          duration,
+          ease: [0.2, 0.7, 0.2, 1],
+          onUpdate: (v: number) => setVal(Math.round(v)),
+        });
+        return () => {};
+      }, { amount: 0.5 });
+    });
+
+    // bar fills
+    const bars = root.querySelectorAll<HTMLElement>('[data-bar-target]');
+    bars.forEach((el) => {
+      const target = Number(el.dataset.barTarget); // percent 0..100
+      el.style.width = target + '%';
+      if (reduced) return;
+      el.style.transformOrigin = 'left center';
+      el.style.transform = 'scaleX(0)';
+      inView(el, () => {
+        animate(
+          el,
+          { transform: ['scaleX(0)', 'scaleX(1)'] },
+          { duration: 1.0, ease: [0.2, 0.7, 0.2, 1], delay: 0.18 }
+        );
+        return () => {};
+      }, { amount: 0.4 });
+    });
+  }
+</script>

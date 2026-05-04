@@ -350,6 +350,31 @@ CREATE INDEX IF NOT EXISTS idx_sync_file_hashes_project ON sync_file_hashes(proj
   },
   {
     version: 8,
+    name: "memory_edges",
+    sql: `
+CREATE TABLE IF NOT EXISTS memory_edges (
+  from_id    TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  to_id      TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  edge_type  TEXT NOT NULL,
+  weight     REAL NOT NULL DEFAULT 1.0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (from_id, to_id, edge_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_edges_from ON memory_edges(from_id);
+CREATE INDEX IF NOT EXISTS idx_memory_edges_to ON memory_edges(to_id);
+CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type);
+
+INSERT OR IGNORE INTO memory_edges (from_id, to_id, edge_type, weight, created_at)
+  SELECT id, supersedes_memory_id, 'supersedes', 1.0, created_at
+  FROM memories
+  WHERE supersedes_memory_id IS NOT NULL;
+`,
+  },
+  {
+    // P0 Task 2: heuristic quality on auto-capture rows. Compressor (Task 6)
+    // soft-deletes clusters whose median falls below qualityFloor.
+    version: 9,
     name: "quality_score",
     sql: "",
     afterSql: (db: Database.Database) => {
@@ -364,48 +389,8 @@ CREATE INDEX IF NOT EXISTS idx_sync_file_hashes_project ON sync_file_hashes(proj
     },
   },
   {
-    version: 9,
-    name: "memory_edges",
-    sql: `
-CREATE TABLE IF NOT EXISTS memory_edges (
-  from_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-  to_memory_id   TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-  edge_type      TEXT NOT NULL CHECK(edge_type IN ('causes','fixes','supersedes','contradicts','derives_from','relates_to')),
-  weight         REAL NOT NULL DEFAULT 1.0,
-  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
-  PRIMARY KEY (from_memory_id, to_memory_id, edge_type)
-);
-
-CREATE INDEX IF NOT EXISTS idx_memory_edges_from ON memory_edges(from_memory_id);
-CREATE INDEX IF NOT EXISTS idx_memory_edges_to   ON memory_edges(to_memory_id);
-CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type);
-
--- Append-only mirror: edges are not auto-removed when supersedes_memory_id is cleared.
--- Mirror legacy supersedes_memory_id column into memory_edges so existing rows surface.
-CREATE TRIGGER IF NOT EXISTS memories_supersedes_ai AFTER INSERT ON memories
-WHEN new.supersedes_memory_id IS NOT NULL BEGIN
-  INSERT OR IGNORE INTO memory_edges(from_memory_id, to_memory_id, edge_type, weight)
-  VALUES (new.id, new.supersedes_memory_id, 'supersedes', 1.0);
-END;
-
-CREATE TRIGGER IF NOT EXISTS memories_supersedes_au AFTER UPDATE OF supersedes_memory_id ON memories
-WHEN new.supersedes_memory_id IS NOT NULL AND (old.supersedes_memory_id IS NULL OR old.supersedes_memory_id != new.supersedes_memory_id) BEGIN
-  INSERT OR IGNORE INTO memory_edges(from_memory_id, to_memory_id, edge_type, weight)
-  VALUES (new.id, new.supersedes_memory_id, 'supersedes', 1.0);
-END;
-`,
-    afterSql: (db: Database.Database) => {
-      // Backfill: existing rows with supersedes_memory_id get a memory_edges row.
-      db.exec(`
-        INSERT OR IGNORE INTO memory_edges(from_memory_id, to_memory_id, edge_type, weight)
-        SELECT m.id, m.supersedes_memory_id, 'supersedes', 1.0
-        FROM memories m
-        INNER JOIN memories target ON target.id = m.supersedes_memory_id
-        WHERE m.supersedes_memory_id IS NOT NULL
-      `);
-    },
-  },
-  {
+    // P4 Task 1: pin memories to file paths + optional line range + commit_sha
+    // for staleness checks on Edit/Write or via the `anchors check` CLI.
     version: 10,
     name: "memory_anchors",
     sql: `
@@ -428,30 +413,10 @@ CREATE INDEX IF NOT EXISTS idx_memory_anchors_status ON memory_anchors(status) W
 `,
   },
   {
-    // v8 (quality_score) was added retroactively *after* v9 (memory_edges) had
-    // already shipped. Users who upgraded to v9 before v8 existed will skip v8
-    // because the loop guard is `migration.version > currentVersion`, and 8 > 9
-    // is false. v11 re-applies the v8 body idempotently for those DBs.
-    // Fresh installs run v8 normally and this becomes a no-op.
-    version: 11,
-    name: "quality_score_backfill",
-    sql: "",
-    afterSql: (db: Database.Database) => {
-      const cols = (db.pragma("table_info(memories)") as Array<{ name: string }>).map(c => c.name);
-      if (!cols.includes("quality_score")) {
-        db.exec("ALTER TABLE memories ADD COLUMN quality_score REAL NOT NULL DEFAULT 0.5");
-      }
-      db.exec(`
-        CREATE INDEX IF NOT EXISTS idx_memories_quality
-        ON memories(project_id, quality_score) WHERE deleted_at IS NULL AND source = 'auto-capture'
-      `);
-    },
-  },
-  {
     // P3 Task 1: audit table for the consolidation scheduler. Each tick inserts
     // a 'running' row, then updates to 'finished'/'failed' on completion. Leader
     // election uses a 5-minute staleness window over the most recent 'running'.
-    version: 12,
+    version: 11,
     name: "consolidation_runs",
     sql: `
 CREATE TABLE IF NOT EXISTS consolidation_runs (

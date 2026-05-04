@@ -22,19 +22,34 @@ function vaultNoteToEntry(note: VaultNoteRow): SourceIndexEntry {
   };
 }
 
-export async function handleMemoryList(
+/** Structured payload for memory_list's outputSchema. */
+export type MemoryListResult = {
+  detail: "index" | "summary" | "full";
+  count: number;
+  memories: Array<{
+    id: string;
+    title: string;
+    source: "sqlite" | "file";
+    memory_type?: string;
+    importance?: number;
+    pinned?: boolean;
+    body?: string;
+  }>;
+  vault_results: Array<{ id: string; title: string; relativePath: string; kind?: string }>;
+};
+
+export async function listMemories(
   repo: MemoriesRepo,
   config: Config,
   params: {
     project_path?: string; memory_type?: string; scope?: string;
     pinned_only?: boolean; limit?: number; detail?: "index" | "summary" | "full";
     include_file_memories?: boolean;
-    // vault-specific filters
     vault_kind?: string; vault_folder?: string;
   },
   db?: Database.Database,
-): Promise<string> {
-  const detail = params.detail ?? config.search.defaultDetail;
+): Promise<{ text: string; structured: MemoryListResult }> {
+  const detail = (params.detail ?? config.search.defaultDetail) as "index" | "summary" | "full";
   const results: any[] = repo.list({
     projectPath: params.project_path, memoryType: params.memory_type,
     scope: params.scope, pinnedOnly: params.pinned_only, limit: params.limit,
@@ -56,6 +71,8 @@ export async function handleMemoryList(
   else sqliteOutput = formatFull(results, config.search.bodyPreviewChars);
 
   // Vault listing
+  let vaultEntries: SourceIndexEntry[] = [];
+  let vaultOutput = "";
   if (db && config.vault.enabled && config.vault.path) {
     let q = "SELECT * FROM vault_notes WHERE vault_path = ? AND routable = 1 AND blocked = 0 AND orphan = 0";
     const bindings: unknown[] = [config.vault.path];
@@ -68,16 +85,54 @@ export async function handleMemoryList(
     const vaultRows = db.prepare(q).all(...bindings) as VaultNoteRow[];
 
     if (vaultRows.length > 0) {
-      const entries = vaultRows.map(vaultNoteToEntry);
-      const vaultOutput = detail === "index"
-        ? formatVaultIndex(entries)
-        : entries.map(formatVaultEntry).join("\n\n");
-
-      return sqliteOutput && sqliteOutput !== "No results found."
-        ? sqliteOutput + "\n\n" + vaultOutput
-        : vaultOutput;
+      vaultEntries = vaultRows.map(vaultNoteToEntry);
+      vaultOutput = detail === "index"
+        ? formatVaultIndex(vaultEntries)
+        : vaultEntries.map(formatVaultEntry).join("\n\n");
     }
   }
 
-  return sqliteOutput;
+  const text = vaultOutput
+    ? (sqliteOutput && sqliteOutput !== "No results found."
+        ? sqliteOutput + "\n\n" + vaultOutput
+        : vaultOutput)
+    : sqliteOutput;
+
+  const structured: MemoryListResult = {
+    detail,
+    count: results.length,
+    memories: results.map(r => ({
+      id: String(r.id),
+      title: String(r.title ?? ""),
+      source: r.source as "sqlite" | "file",
+      ...(r.memory_type ? { memory_type: String(r.memory_type) } : {}),
+      ...(r.importance_score !== undefined ? { importance: Number(r.importance_score) } : {}),
+      ...(r.pinned !== undefined ? { pinned: Boolean(r.pinned) } : {}),
+      ...(detail !== "index" && r.body ? { body: String(r.body) } : {}),
+    })),
+    vault_results: vaultEntries.map(v => ({
+      id: String(v.id),
+      title: String(v.title),
+      relativePath: String(v.path ?? ""),
+      ...(v.kind ? { kind: String(v.kind) } : {}),
+    })),
+  };
+
+  return { text, structured };
+}
+
+/** Backward-compatible wrapper returning only the rendered text. */
+export async function handleMemoryList(
+  repo: MemoriesRepo,
+  config: Config,
+  params: {
+    project_path?: string; memory_type?: string; scope?: string;
+    pinned_only?: boolean; limit?: number; detail?: "index" | "summary" | "full";
+    include_file_memories?: boolean;
+    vault_kind?: string; vault_folder?: string;
+  },
+  db?: Database.Database,
+): Promise<string> {
+  const { text } = await listMemories(repo, config, params, db);
+  return text;
 }

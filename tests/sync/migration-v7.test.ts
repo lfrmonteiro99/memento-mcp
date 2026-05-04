@@ -12,8 +12,8 @@ describe("migration v7: sync_state + sync_file_hashes tables", () => {
   beforeEach(() => { db = createDatabase(dbPath); });
   afterEach(() => { db.close(); rmSync(dbPath, { force: true }); });
 
-  it("sets user_version to at least 7", () => {
-    expect(db.pragma("user_version", { simple: true })).toBeGreaterThanOrEqual(7);
+  it("sets user_version to the latest migration (>= 11)", () => {
+    expect(db.pragma("user_version", { simple: true })).toBeGreaterThanOrEqual(11);
   });
 
   it("creates sync_state table with correct columns", () => {
@@ -47,6 +47,6 @@ describe("migration v7: sync_state + sync_file_hashes tables", () => {
   it("is idempotent: re-opening doesn't error", () => {
     db.close();
     db = createDatabase(dbPath);
-    expect(db.pragma("user_version", { simple: true })).toBeGreaterThanOrEqual(7);
+    expect(db.pragma("user_version", { simple: true })).toBeGreaterThanOrEqual(11);
   });
 });

@@ -62,7 +62,7 @@ describe("memory_search", () => {
     const ctx = setupSearchableCtx();
     const mA = ctx.store({ title: "deadlock howto", body: "How to handle Postgres deadlocks" });
     const mB = ctx.store({ title: "lock contention fix", body: "Resolves database locks" });
-    ctx.edgeRepo.create({ from: mB, to: mA, edge_type: "fixes", weight: 1.0 });
+    ctx.edgeRepo.link(mB, mA, "mitigated_by", 1.0);
 
     const result = await handleMemorySearch(
       ctx.memRepo, ctx.config,
@@ -74,7 +74,7 @@ describe("memory_search", () => {
     expect(result).toMatch(/deadlock howto/i);
     expect(result).toMatch(/lock contention fix/i);
     // The edge neighbour section is annotated with the relationship
-    expect(result).toMatch(/edge neighbour|via fixes|--\[fixes\]--|\[fixes\]/i);
+    expect(result).toMatch(/edge neighbour|\[mitigated_by\]/i);
     ctx.db.close();
   });
 
@@ -96,15 +96,15 @@ describe("memory_search", () => {
     const mA = ctx.store({ title: "deadlock howto", body: "deadlock body" });
     const mB = ctx.store({ title: "NodeB causes result", body: "b body" });
     const mC = ctx.store({ title: "NodeC relates result", body: "c body" });
-    ctx.edgeRepo.create({ from: mA, to: mB, edge_type: "causes", weight: 1.0 });
-    ctx.edgeRepo.create({ from: mA, to: mC, edge_type: "relates_to", weight: 1.0 });
+    ctx.edgeRepo.link(mA, mB, "caused_by", 1.0);
+    ctx.edgeRepo.link(mA, mC, "relates_to", 1.0);
 
     const result = await handleMemorySearch(
       ctx.memRepo, ctx.config,
-      { query: "deadlock", include_edges: true, edge_types: ["causes"], project_path: ctx.projectPath },
+      { query: "deadlock", include_edges: true, edge_types: ["caused_by"], project_path: ctx.projectPath },
       ctx.db,
     );
-    // mB (causes-linked) appears; mC (relates_to) does not
+    // mB (caused_by-linked) appears; mC (relates_to) does not
     expect(result).toMatch(/NodeB causes result/);
     expect(result).not.toMatch(/NodeC relates result/);
     ctx.db.close();
@@ -115,7 +115,7 @@ describe("memory_search", () => {
     const mA = ctx.store({ title: "deadlock alpha", body: "deadlock body alpha" });
     const mB = ctx.store({ title: "deadlock beta", body: "deadlock body beta" });
     // mA → mB via causes; both will hit FTS for "deadlock"
-    ctx.edgeRepo.create({ from: mA, to: mB, edge_type: "causes", weight: 1.0 });
+    ctx.edgeRepo.link(mA, mB, "caused_by", 1.0);
 
     const result = await handleMemorySearch(
       ctx.memRepo, ctx.config,
@@ -132,7 +132,7 @@ describe("memory_search", () => {
     const ctx = setupSearchableCtx();
     const mA = ctx.store({ title: "deadlock howto", body: "deadlock body" });
     const mB = ctx.store({ title: "soft deleted ghost", body: "ghost" });
-    ctx.edgeRepo.create({ from: mA, to: mB, edge_type: "causes", weight: 1.0 });
+    ctx.edgeRepo.link(mA, mB, "caused_by", 1.0);
     ctx.db.prepare(`UPDATE memories SET deleted_at = datetime('now') WHERE id = ?`).run(mB);
 
     const result = await handleMemorySearch(

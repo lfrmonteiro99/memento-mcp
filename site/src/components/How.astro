@@ -1,0 +1,49 @@
+---
+const steps = [
+  { num: '1', title: 'Agent activity', body: 'Decisions, pitfalls and patterns surface during a session.' },
+  { num: '2', title: 'Typed store', body: 'Memories are written to local SQLite with type, scope and tags.' },
+  { num: '3', title: 'Ranked retrieval', body: 'FTS5 + optional embeddings, scored by type, recency and utility.' },
+  { num: '4', title: 'Context injection', body: "The right slice lands in your agent's prompt at the right time." },
+];
+---
+
+<section id="how" class="container-x py-[clamp(64px,10vw,120px)] divider-dashed">
+  <div class="section-tag">// how it works</div>
+  <h2 class="text-[clamp(26px,4vw,42px)] font-bold leading-[1.12] max-w-[22ch] mb-[14px]" style="letter-spacing: -.02em;">
+    Capture. Store. Rank. <span class="grad-text">Inject</span>.
+  </h2>
+
+  <div class="mt-9 grid items-center gap-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr]">
+    {steps.map((s, i) => (
+      <>
+        <div class="card-base p-[18px]" data-anim="fade-up">
+          <span class="block" style="font-family: var(--font-mono); font-size: 11px; color: var(--color-accent); letter-spacing: .08em;">{s.num}</span>
+          <h4 class="my-1 text-[15px]">{s.title}</h4>
+          <p class="m-0 text-[13.5px]" style="color: var(--color-fg-mute);">{s.body}</p>
+        </div>
+        {i < steps.length - 1 && (
+          <div class="hidden lg:inline-flex justify-self-center" style="color: var(--color-fg-dim);" aria-hidden="true">
+            <svg viewBox="0 0 60 14" width="60" height="14">
+              <path d="M2 7h52M48 2l8 5-8 5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </div>
+        )}
+      </>
+    ))}
+  </div>
+
+  <div class="snippet mt-9 overflow-hidden rounded-[var(--radius-lg)] border" style="background: #0a0c12; border-color: var(--color-border);" data-anim="fade-up">
+    <div class="flex gap-1 border-b px-2 pt-2" style="background: rgba(255, 255, 255, .02); border-color: rgba(255, 255, 255, .06);">
+      <span class="rounded-t-md border border-b-0 px-3 py-[6px] text-[12px]" style="font-family: var(--font-mono); color: #d6e1ec; background: #0a0c12; border-color: rgba(255, 255, 255, .08);">decision.json</span>
+      <span class="rounded-t-md border border-b-0 border-transparent px-3 py-[6px] text-[12px]" style="font-family: var(--font-mono); color: rgba(214, 225, 236, .5);">pitfall.json</span>
+    </div>
+    <pre class="m-0 px-5 py-[18px] text-[13px] overflow-x-auto" style="font-family: var(--font-mono); color: #d6e1ec;"><code>{`{
+  `}<span class="k">"type"</span>{`: `}<span class="s">"decision"</span>{`,
+  `}<span class="k">"title"</span>{`: `}<span class="s">"Use repository classes for complex SQL"</span>{`,
+  `}<span class="k">"body"</span>{`: `}<span class="s">"Keeps business logic out of controllers; easier perf tuning."</span>{`,
+  `}<span class="k">"scope"</span>{`: `}<span class="s">"project"</span>{`,
+  `}<span class="k">"tags"</span>{`: [`}<span class="s">"architecture"</span>{`, `}<span class="s">"backend"</span>{`],
+  `}<span class="k">"created_at"</span>{`: `}<span class="s">"2026-04-25T12:04:11Z"</span>{`
+}`}</code></pre>
+  </div>
+</section>

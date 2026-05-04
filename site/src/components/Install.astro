@@ -1,0 +1,39 @@
+---
+const steps = [
+  { title: 'Install',
+    code: 'npm install -g @luispmonteiro/memento-memory-mcp' },
+  { title: 'Wire your MCP client',
+    code: 'memento-mcp install',
+    note: 'Configures Claude Code, Codex, Cursor, or any other stdio-MCP client.' },
+  { title: 'Import existing project memory',
+    code: 'memento-mcp import auto --dry-run\nmemento-mcp import auto --no-confirm',
+    note: 'Detects CLAUDE.md, AGENTS.md, .cursor/rules, .github/copilot-instructions, GEMINI.md, .windsurfrules, .clinerules, and .roo/rules in one shot.' },
+  { title: 'Inspect & share',
+    code: '<span>memento-mcp ui              </span><span class="comment"># local browser inspector</span>\n<span>memento-mcp sync init       </span><span class="comment"># share team memory via git</span>\n<span>memento-mcp sync pull</span>',
+    raw: true },
+];
+---
+
+<section id="install" class="container-x py-[clamp(64px,10vw,120px)] divider-dashed">
+  <div class="section-tag">// 60-second tour</div>
+  <h2 class="text-[clamp(26px,4vw,42px)] font-bold leading-[1.12] max-w-[22ch] mb-[14px]" style="letter-spacing: -.02em;">
+    From npm to <span class="grad-text">remembering</span>, in four steps.
+  </h2>
+
+  <ol class="steps mt-8 grid list-none gap-4 p-0">
+    {steps.map((s) => (
+      <li class="card-base" data-anim="fade-up">
+        <h4 class="m-0 mb-[10px] text-[16px]">{s.title}</h4>
+        {s.raw
+          ? <pre class="codeblock"><code set:html={s.code}></code></pre>
+          : <pre class="codeblock"><code>{s.code}</code></pre>}
+        {s.note && <p class="step-note mt-2 mb-0 text-[13.5px]" style="color: var(--color-fg-mute);">{s.note}</p>}
+      </li>
+    ))}
+  </ol>
+
+  <div class="mt-7 flex flex-wrap gap-[10px]">
+    <a class="btn btn-primary" href="https://github.com/lfrmonteiro99/memento-mcp" target="_blank" rel="noopener">Get it on GitHub</a>
+    <a class="btn btn-ghost" href="https://www.npmjs.com/package/@luispmonteiro/memento-memory-mcp" target="_blank" rel="noopener">View on npm</a>
+  </div>
+</section>

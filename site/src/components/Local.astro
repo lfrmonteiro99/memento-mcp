@@ -1,0 +1,63 @@
+---
+const checks = [
+  'Local SQLite. No required cloud.',
+  'FTS5 search out of the box.',
+  'Optional embeddings — opt-in, your key.',
+  'Team sync via git, not a SaaS.',
+  'Private regions excluded from sync, search and LLM calls.',
+  'Secret scrubbing at write time.',
+];
+---
+
+<section id="local" class="container-x py-[clamp(64px,10vw,120px)] divider-dashed">
+  <div class="section-tag">// local-first</div>
+  <h2 class="text-[clamp(26px,4vw,42px)] font-bold leading-[1.12] max-w-[22ch] mb-[14px]" style="letter-spacing: -.02em;">
+    Your memory. Your machine. <span class="grad-text">Your repo</span>.
+  </h2>
+  <ul class="local-list mt-8 grid max-w-[820px] grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+    {checks.map((c) => (
+      <li class="flex items-center gap-3 text-[15px]" style="color: var(--color-fg-soft);" data-anim="fade-up">
+        <span class="chk-svg" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22">
+            <rect x="2" y="2" width="20" height="20" rx="6" class="chk-bg" />
+            <path d="M7 12.5 10.5 16 17 9" class="chk-stroke" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </span>
+        <span>{c}</span>
+      </li>
+    ))}
+  </ul>
+</section>
+
+<script>
+  import { animate, inView, stagger } from 'motion';
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const strokes = document.querySelectorAll<SVGPathElement>('#local .chk-stroke');
+
+  if (strokes.length) {
+    strokes.forEach((p) => {
+      const len = p.getTotalLength();
+      p.style.strokeDasharray = String(len);
+      p.style.strokeDashoffset = reduced ? '0' : String(len);
+    });
+
+    if (!reduced) {
+      const list = document.querySelector<HTMLElement>('#local .local-list');
+      if (list) {
+        inView(
+          list,
+          () => {
+            animate(
+              strokes as unknown as Element[],
+              { strokeDashoffset: [strokes[0]?.getTotalLength() ?? 30, 0] },
+              { duration: 0.5, delay: stagger(0.07), ease: [0.2, 0.7, 0.2, 1] }
+            );
+            return () => {};
+          },
+          { amount: 0.3 }
+        );
+      }
+    }
+  }
+</script>

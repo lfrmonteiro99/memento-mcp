@@ -7,12 +7,34 @@ import { searchFileMemories } from "../lib/file-memory.js";
 import { formatIndex, formatFull, formatSummary, formatVaultEntry, formatVaultIndex } from "../lib/formatter.js";
 import { estimateTokensV2 } from "../engine/token-estimator.js";
 import { searchVault } from "../engine/vault-router.js";
-import { EdgesRepo, type EdgeType, type Edge } from "../db/edges.js";
+import { EdgesRepo, type EdgeType, type EdgeRow } from "../db/edges.js";
 import { reciprocalRankFusion } from "../engine/rrf.js";
 import { createProvider, type EmbeddingProvider } from "../engine/embeddings/provider.js";
 import type { EmbeddingsRepo } from "../db/embeddings.js";
 
-export async function handleMemorySearch(
+/** Structured payload for the memory_search tool's outputSchema. */
+export type MemorySearchResult = {
+  query: string;
+  detail: "index" | "summary" | "full";
+  count: number;
+  results: Array<{
+    id: string;
+    title: string;
+    score: number;
+    source: "sqlite" | "file";
+    memory_type?: string;
+    body?: string;
+  }>;
+  vault_results: Array<{ relativePath: string; title?: string }>;
+  total_tokens: number;
+};
+
+/**
+ * Run a memory search and produce both a human-readable text rendering and a
+ * machine-readable structured payload. The text and structured shape are
+ * computed from the same in-memory result set so they can never disagree.
+ */
+export async function searchMemories(
   repo: MemoriesRepo,
   config: Config,
   params: {
@@ -30,7 +52,7 @@ export async function handleMemorySearch(
   analyticsTracker?: AnalyticsTracker,
   embRepo?: EmbeddingsRepo,
   providerOverride?: EmbeddingProvider,
-): Promise<string> {
+): Promise<{ text: string; structured: MemorySearchResult }> {
   const limit = params.limit ?? config.search.maxResults;
   const detail = params.detail ?? config.search.defaultDetail;
   const sqliteResults: any[] = [];
@@ -87,7 +109,10 @@ export async function handleMemorySearch(
     const normalizedRank = Math.abs(r.rank ?? 0) / maxRank;
     const baseScore = normalizedRank * 0.6 + (r.importance_score ?? 0.5) * 0.4;
     r.score = applyDecay(baseScore, r.last_accessed_at);
-    r.source = r.source ?? "sqlite";
+    // Hardcode the search-layer source. The DB has its own `source` column
+    // (e.g. "user"|"auto-capture"|"compression") which would leak into the
+    // structured output schema and break the "sqlite"|"file" enum.
+    r.source = "sqlite";
     sqliteResults.push(r);
   }
 
@@ -155,12 +180,12 @@ export async function handleMemorySearch(
 
     const collect = (
       hit: any,
-      edges: Edge[],
+      edges: EdgeRow[],
       arrow: "→" | "←",
       neighbourSide: "from" | "to",
     ) => {
       for (const e of edges) {
-        const neighbourId = neighbourSide === "to" ? e.to_memory_id : e.from_memory_id;
+        const neighbourId = neighbourSide === "to" ? e.to_id : e.from_id;
         if (seen.has(neighbourId)) continue;
         const m = fetchById(neighbourId);
         if (!m) continue;
@@ -179,15 +204,11 @@ export async function handleMemorySearch(
 
     const queryByTypes = (
       hit: any,
-      fn: (memId: string, et?: EdgeType) => Edge[],
+      fn: (memId: string, types?: EdgeType[]) => EdgeRow[],
       arrow: "→" | "←",
       neighbourSide: "from" | "to",
     ) => {
-      if (filterTypes && filterTypes.length > 0) {
-        for (const t of filterTypes) collect(hit, fn(hit.id, t), arrow, neighbourSide);
-      } else {
-        collect(hit, fn(hit.id), arrow, neighbourSide);
-      }
+      collect(hit, fn(hit.id, filterTypes), arrow, neighbourSide);
     };
 
     for (const hit of limitedSqlite) {
@@ -232,19 +253,63 @@ export async function handleMemorySearch(
       : section.trim();
   }
 
-  const finalOutput = output || "No results found.";
+  const text = output || "No results found.";
+  const total_tokens = estimateTokensV2(text);
 
   // Emit analytics event for search layer used
   if (analyticsTracker) {
-    const totalTokens = estimateTokensV2(finalOutput);
     const sessionId = process.env.CLAUDE_SESSION_ID || "unknown";
     analyticsTracker.track({
       event_type: "search_layer_used",
       session_id: sessionId,
-      event_data: JSON.stringify({ detail: detail || "full", results: limitedSqlite.length, total_tokens: totalTokens }),
-      tokens_cost: totalTokens,
+      event_data: JSON.stringify({ detail: detail || "full", results: limitedSqlite.length, total_tokens }),
+      tokens_cost: total_tokens,
     });
   }
 
-  return finalOutput;
+  const structured: MemorySearchResult = {
+    query: params.query,
+    detail: (detail ?? "index") as "index" | "summary" | "full",
+    count: limitedSqlite.length,
+    results: limitedSqlite.map(r => ({
+      id: String(r.id),
+      title: String(r.title ?? ""),
+      score: Number(r.score ?? 0),
+      source: r.source as "sqlite" | "file",
+      ...(r.memory_type ? { memory_type: String(r.memory_type) } : {}),
+      ...(detail !== "index" && r.body ? { body: String(r.body) } : {}),
+    })),
+    vault_results: vaultEntries.map(v => ({
+      relativePath: String((v as any).relativePath ?? (v as any).path ?? ""),
+      ...(((v as any).title) ? { title: String((v as any).title) } : {}),
+    })),
+    total_tokens,
+  };
+
+  return { text, structured };
+}
+
+/**
+ * Backward-compatible wrapper — many tests and call sites import this and
+ * expect a string. Internally it just delegates to `searchMemories` and
+ * returns the rendered text.
+ */
+export async function handleMemorySearch(
+  repo: MemoriesRepo,
+  config: Config,
+  params: {
+    query: string; project_path?: string; memory_type?: string;
+    limit?: number; detail?: "index" | "summary" | "full"; include_file_memories?: boolean;
+    include_edges?: boolean;
+    edge_types?: EdgeType[];
+    edge_direction?: "outgoing" | "incoming" | "both";
+    include_deleted_neighbours?: boolean;
+  },
+  db?: Database.Database,
+  analyticsTracker?: AnalyticsTracker,
+  embRepo?: EmbeddingsRepo,
+  providerOverride?: EmbeddingProvider,
+): Promise<string> {
+  const { text } = await searchMemories(repo, config, params, db, analyticsTracker, embRepo, providerOverride);
+  return text;
 }

@@ -139,10 +139,10 @@ describe("migration v5→v6: existing rows backfill", () => {
     rawDb.pragma("user_version = 5");
     rawDb.close();
 
-    // Now open with createDatabase — should apply v6 migration (and v7+).
+    // Now open with createDatabase — should apply all v6+ migrations.
     db = createDatabase(dbPath);
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBeGreaterThanOrEqual(7);
+    expect(version).toBeGreaterThanOrEqual(11);
 
     // m1 should have has_private=1 (backfilled).
     const m1 = db.prepare("SELECT has_private FROM memories WHERE id = 'm1'").get() as any;

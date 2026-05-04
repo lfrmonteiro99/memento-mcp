@@ -224,9 +224,9 @@ describe("runCompressionCycle (R5 atomic pipeline)", () => {
     expect(newMem).toBeDefined();
 
     const edges = db.prepare(
-      "SELECT to_memory_id FROM memory_edges WHERE from_memory_id = ? AND edge_type = 'derives_from'",
-    ).all(newMem.id) as Array<{ to_memory_id: string }>;
-    const edgeTargets = edges.map(e => e.to_memory_id).sort();
+      "SELECT to_id FROM memory_edges WHERE from_id = ? AND edge_type = 'derives_from'",
+    ).all(newMem.id) as Array<{ to_id: string }>;
+    const edgeTargets = edges.map(e => e.to_id).sort();
     const sourcesInResult = compressed[0].source_memory_ids.sort();
     expect(edgeTargets).toEqual(sourcesInResult);
   });

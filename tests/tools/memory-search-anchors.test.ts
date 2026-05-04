@@ -86,10 +86,10 @@ describe("memory_search annotates results with anchor_status (P4 Task 7)", () =>
       source: "compression",
     });
     db.prepare(
-      "INSERT INTO memory_edges(from_memory_id, to_memory_id, edge_type, weight) VALUES (?, ?, 'derives_from', 1.0)",
+      "INSERT INTO memory_edges(from_id, to_id, edge_type, weight) VALUES (?, ?, 'derives_from', 1.0)",
     ).run(compressedId, sourceA);
     db.prepare(
-      "INSERT INTO memory_edges(from_memory_id, to_memory_id, edge_type, weight) VALUES (?, ?, 'derives_from', 1.0)",
+      "INSERT INTO memory_edges(from_id, to_id, edge_type, weight) VALUES (?, ?, 'derives_from', 1.0)",
     ).run(compressedId, sourceB);
     db.prepare("UPDATE memories SET deleted_at = datetime('now') WHERE id IN (?, ?)").run(sourceA, sourceB);
 
@@ -127,7 +127,7 @@ describe("memory_search annotates results with anchor_status (P4 Task 7)", () =>
       source: "compression",
     });
     db.prepare(
-      "INSERT INTO memory_edges(from_memory_id, to_memory_id, edge_type, weight) VALUES (?, ?, 'derives_from', 1.0)",
+      "INSERT INTO memory_edges(from_id, to_id, edge_type, weight) VALUES (?, ?, 'derives_from', 1.0)",
     ).run(compressedId, sourceA);
     db.prepare("UPDATE memories SET deleted_at = datetime('now') WHERE id = ?").run(sourceA);
 

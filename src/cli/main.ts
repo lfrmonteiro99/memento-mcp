@@ -731,124 +731,136 @@ This file describes the vault layout for memento-mcp routing.
     process.exit(1);
   }
 
-} else if (command === "import" && sub === "claude-md") {
-  // Issue #13: import an existing CLAUDE.md file into typed memories
-  const { existsSync: fsExists, readFileSync: fsRead } = await import("node:fs");
-  const { join: pathJoin } = await import("node:path");
+} else if (command === "import") {
+  // Multi-LLM memory import: claude-md, cursor, copilot, agents-md, gemini-md,
+  // windsurf, cline, roo, and an `auto` orchestrator that detects every known
+  // file in the project and imports the union with cross-format title dedup.
   const { homedir } = await import("node:os");
-  const { parseClaudeMd } = await import("../lib/import-claude-md.js");
-  const { loadConfig, getDefaultConfigPath, getDefaultDbPath } = await import("../lib/config.js");
-  const { createDatabase } = await import("../db/database.js");
-  const { MemoriesRepo } = await import("../db/memories.js");
-  const { loadProjectPolicy } = await import("../lib/policy.js");
+  const { FORMATS, firstExistingPath, detectAllInProject, shortLabel } = await import("../lib/import-formats.js");
+  const { parseImportFlags, runImportPipeline } = await import("../lib/import-shared.js");
 
-  const args = argv.slice(4);
-  let importPath: string | undefined;
-  let scope: "global" | "project" = "project";
-  let defaultType = "fact";
-  let dryRun = false;
-  let noConfirm = false;
+  const flags = parseImportFlags(argv.slice(4));
 
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--scope" && args[i + 1]) { scope = args[++i] as "global" | "project"; }
-    else if (args[i] === "--type" && args[i + 1]) { defaultType = args[++i]; }
-    else if (args[i] === "--dry-run") { dryRun = true; }
-    else if (args[i] === "--no-confirm") { noConfirm = true; }
-    else if (!importPath && !args[i].startsWith("--")) { importPath = args[i]; }
-  }
+  if (sub === "auto") {
+    const cwd = process.cwd();
+    const hits = detectAllInProject(cwd, homedir());
 
-  if (!importPath) {
-    importPath = scope === "global"
-      ? pathJoin(homedir(), ".claude", "CLAUDE.md")
-      : pathJoin(process.cwd(), "CLAUDE.md");
-  }
+    if (hits.length === 0) {
+      console.error("No known LLM memory files found in this project.");
+      console.error("Looked for: CLAUDE.md, .cursor/rules/, .cursorrules, .github/copilot-instructions.md,");
+      console.error("            .github/instructions/, AGENTS.md, GEMINI.md, .windsurfrules, .clinerules, .roo/rules/");
+      process.exit(1);
+    }
 
-  if (!fsExists(importPath)) {
-    console.error(`Source file not found: ${importPath}`);
+    // Read every hit, then dedup section titles across formats (first-format wins).
+    const seenTitles = new Set<string>();
+    type Bundle = { spec: typeof hits[number]["spec"]; path: string; sections: any[]; skipped: any[]; label: string; uniqueCount: number; dupCount: number };
+    const bundles: Bundle[] = [];
+
+    for (const { spec, path } of hits) {
+      const r = spec.read(path, flags.defaultType);
+      const unique: any[] = [];
+      let dup = 0;
+      for (const s of r.sections) {
+        if (seenTitles.has(s.title)) { dup++; continue; }
+        seenTitles.add(s.title);
+        unique.push(s);
+      }
+      bundles.push({
+        spec,
+        path,
+        sections: unique,
+        skipped: r.skipped,
+        label: r.label,
+        uniqueCount: unique.length,
+        dupCount: dup,
+      });
+    }
+
+    // Print summary table
+    const totalUnique = bundles.reduce((n, b) => n + b.uniqueCount, 0);
+    console.log(`\nFound ${bundles.length} format${bundles.length === 1 ? "" : "s"}:`);
+    for (const b of bundles) {
+      const dupNote = b.dupCount > 0 ? ` (${b.dupCount} dup, skipped)` : "";
+      console.log(`  ${shortLabel(b.path, cwd).padEnd(36)} ${String(b.uniqueCount).padStart(3)} sections${dupNote}`);
+    }
+    console.log(`Total: ${totalUnique} unique sections.`);
+
+    if (flags.dryRun) {
+      console.log("\nDry run — nothing imported.");
+      for (const b of bundles) {
+        if (b.sections.length === 0) continue;
+        await runImportPipeline({
+          sections: b.sections,
+          skipped: b.skipped,
+          scope: flags.scope,
+          source: b.spec.source,
+          dryRun: true,
+          noConfirm: true,
+          sourceLabel: b.label,
+        });
+      }
+      process.exit(0);
+    }
+
+    if (!flags.noConfirm) {
+      const ok = await (async () => {
+        const { createInterface } = await import("node:readline/promises");
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        const ans = await rl.question(`\nImport ${totalUnique} memories from ${bundles.length} format(s)? [y/N] `);
+        rl.close();
+        return /^y(es)?$/i.test(ans.trim());
+      })();
+      if (!ok) process.exit(0);
+    }
+
+    // We already prompted (or were given --no-confirm); each per-format pipeline
+    // skips its own prompt. Each retains its per-format `source` for audit.
+    for (const b of bundles) {
+      if (b.sections.length === 0) continue;
+      await runImportPipeline({
+        sections: b.sections,
+        skipped: b.skipped,
+        scope: flags.scope,
+        source: b.spec.source,
+        dryRun: false,
+        noConfirm: true,
+        sourceLabel: b.label,
+      });
+    }
+  } else if (sub && FORMATS[sub]) {
+    const spec = FORMATS[sub];
+    const path = flags.importPath ?? firstExistingPath(spec, flags.scope, process.cwd(), homedir());
+
+    if (!path) {
+      const tried = spec.resolve(flags.scope, process.cwd(), homedir()).join(", ");
+      console.error(`Source not found for format '${sub}'. Looked at: ${tried}`);
+      process.exit(1);
+    }
+
+    const { existsSync: fsExists } = await import("node:fs");
+    if (!fsExists(path)) {
+      console.error(`Source not found: ${path}`);
+      process.exit(1);
+    }
+
+    const { sections, skipped, label } = spec.read(path, flags.defaultType);
+
+    await runImportPipeline({
+      sections,
+      skipped,
+      scope: flags.scope,
+      source: spec.source,
+      dryRun: flags.dryRun,
+      noConfirm: flags.noConfirm,
+      sourceLabel: label,
+    });
+  } else {
+    console.error(`Unknown import format: ${sub ?? "(none)"}`);
+    console.error("Usage: memento-mcp import <claude-md|cursor|copilot|agents-md|gemini-md|windsurf|cline|roo|auto>");
+    console.error("       [path] [--scope global|project] [--type fact] [--dry-run] [--no-confirm]");
     process.exit(1);
   }
-
-  const content = fsRead(importPath, "utf-8");
-  const { sections, skipped } = parseClaudeMd(content, defaultType);
-
-  console.log(`\nFound ${sections.length} sections (${skipped.length} skipped) in ${importPath}\n`);
-  for (const s of sections) {
-    console.log(`  [${s.inferredType}] ${s.title}`);
-    if (s.inferredTags.length) console.log(`    tags: ${s.inferredTags.join(", ")}`);
-  }
-  if (skipped.length) {
-    console.log(`\nSkipped ${skipped.length}:`);
-    for (const sk of skipped) console.log(`  (${sk.reason}) ${sk.preview.slice(0, 60)}...`);
-  }
-
-  if (dryRun) { console.log("\nDry run — nothing imported."); process.exit(0); }
-
-  if (!noConfirm) {
-    const ok = await (async () => {
-      const { createInterface } = await import("node:readline/promises");
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      const ans = await rl.question(`\nImport ${sections.length} memories? [y/N] `);
-      rl.close();
-      return /^y(es)?$/i.test(ans.trim());
-    })();
-    if (!ok) process.exit(0);
-  }
-
-  // Load policy for cwd so imports respect required_tags / banned_content (Issue #9 composition)
-  const projectRoot = process.cwd();
-  const policy = loadProjectPolicy(projectRoot);
-
-  // Open DB and store
-  const config = loadConfig(getDefaultConfigPath());
-  const db = createDatabase(process.env.MEMENTO_DB_PATH ?? (config.database.path || getDefaultDbPath()));
-  const repo = new MemoriesRepo(db);
-
-  let created = 0;
-  let dupes = 0;
-  let policyBlocked = 0;
-
-  for (const s of sections) {
-    // Skip duplicates by title within target scope
-    const existing = db.prepare(
-      "SELECT id FROM memories WHERE title = ? AND scope = ? AND deleted_at IS NULL LIMIT 1"
-    ).get(s.title, scope) as { id: string } | undefined;
-    if (existing) { dupes++; continue; }
-
-    // Policy: required_tags check
-    if (policy && policy.requiredTagsAnyOf.length > 0) {
-      const hasAny = policy.requiredTagsAnyOf.some(t => s.inferredTags.includes(t));
-      if (!hasAny) {
-        policyBlocked++;
-        console.log(`  POLICY SKIP (required_tags.any_of not met): ${s.title}`);
-        continue;
-      }
-    }
-
-    // Policy: banned_content check
-    if (policy && policy.bannedContent.length > 0) {
-      const combined = `${s.title}\n${s.body}\n${s.inferredTags.join(" ")}`;
-      const banned = policy.bannedContent.some(re => re.test(combined));
-      if (banned) {
-        policyBlocked++;
-        console.log(`  POLICY SKIP (banned content): ${s.title}`);
-        continue;
-      }
-    }
-
-    repo.store({
-      title: s.title,
-      body: s.body,
-      memoryType: s.inferredType,
-      scope,
-      tags: s.inferredTags,
-      importance: 0.6,
-      source: "import-claude-md",
-    });
-    created++;
-  }
-
-  console.log(`\nImported ${created} memories (${dupes} duplicate(s) skipped${policyBlocked > 0 ? `, ${policyBlocked} blocked by policy` : ""}).`);
-  db.close();
 
 } else if (command === "consolidate" && sub === "--now") {
   const { ConsolidationScheduler } = await import("../engine/consolidation-scheduler.js");

@@ -1,0 +1,63 @@
+---
+const types = ['fact', 'decision', 'preference', 'pattern', 'architecture', 'pitfall'] as const;
+
+const features = [
+  { num: '01', title: 'Local-first by default',
+    body: "SQLite + FTS5 search. No vector database required. No mandatory cloud account. Your project history doesn't quietly leak to a SaaS." },
+  { num: '02', title: 'Team memory through git',
+    body: 'Team-scoped memories serialize to <code class="inline-code">.memento/memories/</code>. Review, diff, commit, share — like normal project files.' },
+  { num: '03', title: 'Token-aware injection',
+    body: 'Adaptive ranking with utility feedback. The right context lands in the prompt — not all of it, the right of it.' },
+  { num: '04', title: 'Optional embeddings',
+    body: "FTS5 and vector results merged through one ranker. Bring your own key when you want semantic search. Skip it when you don't." },
+  { num: '05', title: 'Privacy that holds',
+    body: '<code class="inline-code">&lt;private&gt;…&lt;/private&gt;</code> regions are excluded from search, embeddings, sync and LLM calls. Secret scrubbing at write time.' },
+  { num: '06', title: 'Per-project policy',
+    body: '<code class="inline-code">.memento/policy.toml</code> controls required tags, banned patterns, retention, and vault promotion — checked into the repo.' },
+  { num: '07', title: 'Session summaries',
+    body: 'Capture the end-of-session signal deterministically, or with optional LLM-assisted summaries via Anthropic or OpenAI.' },
+  { num: '08', title: 'Local web inspector',
+    body: '<code class="inline-code">memento-mcp ui</code> opens a browser inspector for memories, sessions, projects, sync drift, analytics and health.' },
+];
+---
+
+<section id="features" class="container-x py-[clamp(64px,10vw,120px)] divider-dashed">
+  <div class="section-tag">// what it does</div>
+  <h2 class="text-[clamp(26px,4vw,42px)] font-bold leading-[1.12] max-w-[22ch] mb-[14px]" style="letter-spacing: -.02em;">
+    A typed memory layer that <span class="grad-text">survives sessions</span>.
+  </h2>
+  <p class="m-0 mb-7 max-w-[56ch]" style="color: var(--color-fg-soft);">
+    Six memory types, ranked and retrieved by intent. Your agent stops guessing and starts remembering.
+  </p>
+
+  <div class="mb-9 flex flex-wrap gap-2">
+    {types.map((t) => (
+      <span class="type-pill" data-type={t}>{t}</span>
+    ))}
+  </div>
+
+  <div class="grid grid-cols-1 gap-[14px] sm:grid-cols-2 lg:grid-cols-4">
+    {features.map((f) => (
+      <article class="feature-card card-base p-[22px]" data-anim="fade-up">
+        <div class="mb-3" style="font-family: var(--font-mono); font-size: 11.5px; color: var(--color-fg-dim); letter-spacing: .04em;">
+          {f.num}
+        </div>
+        <h3 class="text-[16px] mb-1.5">{f.title}</h3>
+        <p class="m-0 text-[14px]" style="color: var(--color-fg-mute);" set:html={f.body}></p>
+      </article>
+    ))}
+  </div>
+</section>
+
+<script>
+  // cursor spotlight on feature cards
+  document.querySelectorAll<HTMLElement>('.feature-card').forEach((el) => {
+    el.addEventListener('mousemove', (e) => {
+      const rect = el.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 100;
+      const y = ((e.clientY - rect.top) / rect.height) * 100;
+      el.style.setProperty('--mx', x + '%');
+      el.style.setProperty('--my', y + '%');
+    });
+  });
+</script>
