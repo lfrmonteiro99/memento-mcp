@@ -198,6 +198,45 @@ describe("runCompressionCycle (R5 atomic pipeline)", () => {
     expect(logCount.c).toBe(results.length);
   });
 
+  it("P0 Task 6: prunes auto-capture clusters whose median quality_score is below qualityFloor", () => {
+    const projectPath = "/lowq-proj";
+    const projectId = memRepo.ensureProject(projectPath);
+
+    // 5 near-duplicate auto-capture rows with low quality_score (0.1) — should cluster and prune.
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      ids.push(
+        memRepo.store({
+          title: `Auto: shell ran ls - ${i}`,
+          body: `Ran ls in /tmp/foo on iteration ${i}; nothing notable`,
+          memoryType: "fact",
+          scope: "project",
+          projectPath,
+          tags: ["auto-capture"],
+          source: "auto-capture",
+          qualityScore: 0.1,
+        }),
+      );
+    }
+
+    const cfg = { ...DEFAULT_COMPRESSION_CONFIG, qualityFloor: 0.25 };
+    const results = runCompressionCycle(db, projectId, cfg);
+
+    // Low-quality cluster pruned, not merged: no compression result references its ids.
+    const compressedSourceIds = new Set(results.flatMap(r => r.source_memory_ids));
+    for (const id of ids) {
+      expect(compressedSourceIds.has(id)).toBe(false);
+    }
+
+    // All 5 low-quality memories soft-deleted.
+    const deleted = db
+      .prepare(
+        "SELECT COUNT(*) as c FROM memories WHERE project_id = ? AND deleted_at IS NOT NULL",
+      )
+      .get(projectId) as { c: number };
+    expect(deleted.c).toBe(5);
+  });
+
   it("skips memories already marked source='compression' (idempotent)", () => {
     const projectPath = "/idemp-proj";
     const projectId = memRepo.ensureProject(projectPath);

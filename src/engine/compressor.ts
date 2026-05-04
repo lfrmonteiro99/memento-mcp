@@ -19,6 +19,7 @@ export interface MemoryRecord {
   supersedes_memory_id: string | null;
   source: string;
   adaptive_score: number;
+  quality_score?: number; // P0 Task 4/6: heuristic quality on auto-capture rows
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -29,6 +30,10 @@ export interface CompressionConfig {
   min_cluster_size: number;
   max_body_ratio: number;
   temporal_window_hours: number;
+  /** P0 Task 6: clusters whose median quality_score is < this floor are
+   * soft-deleted instead of merged. Only auto-capture rows carry quality
+   * scores; user rows default to 0.5 and are unaffected by typical floors. */
+  qualityFloor?: number;
 }
 
 export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
@@ -36,6 +41,7 @@ export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
   min_cluster_size: 2,
   max_body_ratio: 0.6,
   temporal_window_hours: 48,
+  qualityFloor: 0.25,
 };
 
 export interface CompressionTriggerConfig {
@@ -483,6 +489,17 @@ export function applyCompression(db: Database.Database, result: CompressionResul
  * Better-sqlite3 transactions are synchronous, so nesting is safe; the
  * outermost transaction is the actual commit boundary.
  */
+/** P0 Task 6: median quality_score of a cluster's memories.
+ * Rows without quality_score (older user rows) default to 0.5 so they don't
+ * trip the floor. */
+function clusterMedianQuality(cluster: CompressionCluster): number {
+  const scores = cluster.memories
+    .map(m => (typeof m.quality_score === "number" ? m.quality_score : 0.5))
+    .sort((a, b) => a - b);
+  if (scores.length === 0) return 0.5;
+  return scores[Math.floor(scores.length / 2)];
+}
+
 export function runCompressionCycle(
   db: Database.Database,
   projectId: string,
@@ -502,7 +519,15 @@ export function runCompressionCycle(
       .all(projectId) as MemoryRecord[];
 
     const clusters = clusterMemories(rows, config);
+    const floor = config.qualityFloor ?? 0;
+    const softDelete = db.prepare(
+      "UPDATE memories SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL",
+    );
     for (const cluster of clusters) {
+      if (floor > 0 && clusterMedianQuality(cluster) < floor) {
+        for (const m of cluster.memories) softDelete.run(m.id);
+        continue;
+      }
       const merged = mergeCluster(cluster);
       applyCompression(db, merged);
       results.push(merged);

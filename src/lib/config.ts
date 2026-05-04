@@ -108,6 +108,7 @@ export interface Config {
     minClusterSize: number;
     maxBodyRatio: number;
     temporalWindowHours: number;
+    qualityFloor: number;
   };
   adaptive: {
     enabled: boolean;
@@ -238,6 +239,7 @@ export const DEFAULT_CONFIG: Config = {
     minClusterSize: 2,
     maxBodyRatio: 0.6,
     temporalWindowHours: 48,
+    qualityFloor: 0.25,
   },
   adaptive: {
     enabled: true,
@@ -390,6 +392,7 @@ export function loadConfig(configPath: string): Config {
     if (c.min_cluster_size != null) config.compression.minClusterSize = Number(c.min_cluster_size);
     if (c.max_body_ratio != null) config.compression.maxBodyRatio = Number(c.max_body_ratio);
     if (c.temporal_window_hours != null) config.compression.temporalWindowHours = Number(c.temporal_window_hours);
+    if (c.quality_floor != null) config.compression.qualityFloor = Number(c.quality_floor);
   }
   if (toml.adaptive) {
     const ad = toml.adaptive;
