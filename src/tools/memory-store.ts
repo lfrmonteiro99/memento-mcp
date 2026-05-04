@@ -11,6 +11,14 @@ import { createLogger, logLevelFromEnv } from "../lib/logger.js";
 import { validateTags } from "../engine/privacy.js";
 import { loadProjectPolicy } from "../lib/policy.js";
 import { pushSingleMemory } from "../sync/git-sync.js";
+import { AnchorsRepo } from "../db/anchors.js";
+import { hasGit, currentCommitSha } from "../engine/git-introspect.js";
+
+export interface AnchorInput {
+  file_path: string;
+  line_start?: number;
+  line_end?: number;
+}
 
 const logger = createLogger(logLevelFromEnv());
 
@@ -21,6 +29,9 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
   persist_to_vault?: boolean; vault_mode?: "create" | "create_or_update";
   vault_kind?: string; vault_folder?: string; vault_note_title?: string;
   dedup?: "strict" | "warn" | "off";
+  /** P4 Task 5: pin the memory to one or more code locations. commit_sha is
+   *  auto-populated when project_path is a git working tree. */
+  anchors?: AnchorInput[];
 }, db?: Database.Database, config?: Config, embRepo?: EmbeddingsRepo, providerOverride?: EmbeddingProvider): Promise<string> {
   // Issue #4: validate balanced <private> tags before storing.
   const tagValidation = validateTags(params.content ?? "");
@@ -121,6 +132,25 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
     importance: params.importance, supersedesId: params.supersedes_id,
     pin: params.pin,
   });
+
+  // P4 Task 5: persist anchors and auto-populate commit_sha when in a git repo.
+  if (params.anchors?.length && db) {
+    const anchorRepo = new AnchorsRepo(db);
+    const sha = hasGit(projectPath) ? currentCommitSha(projectPath) : undefined;
+    for (const a of params.anchors) {
+      try {
+        anchorRepo.attach({
+          memory_id: id,
+          file_path: a.file_path,
+          line_start: a.line_start,
+          line_end: a.line_end,
+          commit_sha: sha,
+        });
+      } catch (e) {
+        logger.warn(`anchor attach failed for ${id} (${a.file_path}): ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
 
   // Issue #11: auto-push to file when scope=team and autoPushOnStore=true
   if (db && config && config.sync.enabled && config.sync.autoPushOnStore && (params.scope === "team")) {
