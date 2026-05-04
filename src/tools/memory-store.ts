@@ -5,7 +5,7 @@ import type { EmbeddingsRepo } from "../db/embeddings.js";
 import type { Config } from "../lib/config.js";
 import { rebuildVaultIndex } from "../engine/vault-index.js";
 import { persistMemoryToVault } from "../engine/vault-writer.js";
-import { createProvider } from "../engine/embeddings/provider.js";
+import { createProvider, type EmbeddingProvider } from "../engine/embeddings/provider.js";
 import { findDuplicate } from "../engine/embeddings/dedup.js";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
 import { validateTags } from "../engine/privacy.js";
@@ -21,7 +21,7 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
   persist_to_vault?: boolean; vault_mode?: "create" | "create_or_update";
   vault_kind?: string; vault_folder?: string; vault_note_title?: string;
   dedup?: "strict" | "warn" | "off";
-}, db?: Database.Database, config?: Config, embRepo?: EmbeddingsRepo): Promise<string> {
+}, db?: Database.Database, config?: Config, embRepo?: EmbeddingsRepo, providerOverride?: EmbeddingProvider): Promise<string> {
   // Issue #4: validate balanced <private> tags before storing.
   const tagValidation = validateTags(params.content ?? "");
   if (!tagValidation.valid) {
@@ -133,7 +133,7 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
 
   // Fire-and-forget embedding — do NOT await, store must remain fast.
   if (config && embRepo) {
-    const provider = createProvider(config.search.embeddings);
+    const provider = providerOverride ?? createProvider(config.search.embeddings);
     if (provider) {
       provider.embed([`${params.title}\n\n${params.content}`])
         .then(([v]) => embRepo.upsert(id, provider.model, v))
