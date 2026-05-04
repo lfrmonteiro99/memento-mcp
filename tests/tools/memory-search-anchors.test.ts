@@ -67,6 +67,83 @@ describe("memory_search annotates results with anchor_status (P4 Task 7)", () =>
     expect(out).not.toContain("[stale]");
   });
 
+  it("P3 Task 6: include_deleted_neighbours surfaces soft-deleted derives_from sources", async () => {
+    // Stand up a compressed memory with derives_from edges to soft-deleted sources.
+    const projectId = memRepo.ensureProject("/tmp/p3-derives-proj");
+
+    const sourceA = memRepo.store({
+      title: "Edit: payments.ts step A", body: "deadlock pattern in payments",
+      memoryType: "fact", scope: "project", projectId,
+    });
+    const sourceB = memRepo.store({
+      title: "Edit: payments.ts step B", body: "deadlock pattern reappears",
+      memoryType: "fact", scope: "project", projectId,
+    });
+    const compressedId = memRepo.store({
+      title: "Cluster: payments.ts deadlock pattern",
+      body: "Rolled-up summary of the recurring deadlock pattern in payments",
+      memoryType: "fact", scope: "project", projectId,
+      source: "compression",
+    });
+    db.prepare(
+      "INSERT INTO memory_edges(from_memory_id, to_memory_id, edge_type, weight) VALUES (?, ?, 'derives_from', 1.0)",
+    ).run(compressedId, sourceA);
+    db.prepare(
+      "INSERT INTO memory_edges(from_memory_id, to_memory_id, edge_type, weight) VALUES (?, ?, 'derives_from', 1.0)",
+    ).run(compressedId, sourceB);
+    db.prepare("UPDATE memories SET deleted_at = datetime('now') WHERE id IN (?, ?)").run(sourceA, sourceB);
+
+    const out = await handleMemorySearch(
+      memRepo,
+      DEFAULT_CONFIG,
+      {
+        query: "deadlock",
+        detail: "index",
+        include_edges: true,
+        edge_types: ["derives_from"],
+        edge_direction: "outgoing",
+        include_deleted_neighbours: true,
+      },
+      db,
+    );
+    // Both source titles surface as edge neighbours of the compressed hit.
+    expect(out).toContain("step A");
+    expect(out).toContain("step B");
+    expect(out).toContain("derives_from");
+  });
+
+  it("P3 Task 6: include_deleted_neighbours=false hides soft-deleted neighbours (default)", async () => {
+    const projectId = memRepo.ensureProject("/tmp/p3-derives-proj-default");
+    const sourceA = memRepo.store({
+      title: "Edit: payments.ts step A default", body: "default-deadlock pattern",
+      memoryType: "fact", scope: "project", projectId,
+    });
+    const compressedId = memRepo.store({
+      title: "Cluster: default-deadlock pattern summary",
+      body: "Rolled-up summary about default-deadlock occurrences",
+      memoryType: "fact", scope: "project", projectId,
+      source: "compression",
+    });
+    db.prepare(
+      "INSERT INTO memory_edges(from_memory_id, to_memory_id, edge_type, weight) VALUES (?, ?, 'derives_from', 1.0)",
+    ).run(compressedId, sourceA);
+    db.prepare("UPDATE memories SET deleted_at = datetime('now') WHERE id = ?").run(sourceA);
+
+    const out = await handleMemorySearch(
+      memRepo,
+      DEFAULT_CONFIG,
+      {
+        query: "default-deadlock",
+        detail: "index",
+        include_edges: true,
+        edge_types: ["derives_from"],
+        edge_direction: "outgoing",
+      },
+      db,
+    );
+    expect(out).not.toContain("step A default");
+  });
+
   it("does not annotate memories without anchors", async () => {
     memRepo.store({
       title: "plain note",

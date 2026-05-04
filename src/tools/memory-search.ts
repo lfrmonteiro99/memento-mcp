@@ -21,6 +21,10 @@ export async function handleMemorySearch(
     include_edges?: boolean;
     edge_types?: EdgeType[];
     edge_direction?: "outgoing" | "incoming" | "both";
+    /** P3 Task 6: when an edge points to a soft-deleted memory (e.g. a
+     * derives_from source rolled up by consolidation), include it instead of
+     * silently skipping. Useful for surfacing provenance on compressed hits. */
+    include_deleted_neighbours?: boolean;
   },
   db?: Database.Database,
   analyticsTracker?: AnalyticsTracker,
@@ -145,6 +149,13 @@ export async function handleMemorySearch(
       limitedSqlite.filter((r: any) => r.id).map((r: any) => r.id as string)
     );
 
+    const includeDeleted = params.include_deleted_neighbours === true;
+    const fetchById = (id: string): any | null => {
+      if (!includeDeleted) return repo.getById(id);
+      // Bypass the deleted_at IS NULL filter so derives_from sources surface.
+      return db.prepare("SELECT * FROM memories WHERE id = ?").get(id) ?? null;
+    };
+
     const collect = (
       hit: any,
       edges: Edge[],
@@ -154,8 +165,9 @@ export async function handleMemorySearch(
       for (const e of edges) {
         const neighbourId = neighbourSide === "to" ? e.to_memory_id : e.from_memory_id;
         if (seen.has(neighbourId)) continue;
-        const m = repo.getById(neighbourId);
-        if (!m || m.deleted_at) continue;
+        const m = fetchById(neighbourId);
+        if (!m) continue;
+        if (m.deleted_at && !includeDeleted) continue;
         seen.add(neighbourId);
         edgeNeighbours.push({
           hit_id: hit.id,
