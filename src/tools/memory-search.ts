@@ -95,6 +95,32 @@ export async function handleMemorySearch(
   sqliteResults.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const limitedSqlite = sqliteResults.slice(0, limit);
 
+  // P4 Task 7: aggregate anchor status per result. Precedence:
+  // anchor-deleted > stale > fresh. Memories without anchors are unannotated.
+  if (db && limitedSqlite.length > 0) {
+    const ids = limitedSqlite.map((r: any) => r.id).filter(Boolean) as string[];
+    if (ids.length > 0) {
+      const placeholders = ids.map(() => "?").join(",");
+      const aggregateRows = db.prepare(`
+        SELECT memory_id,
+               SUM(status = 'stale') AS stale_count,
+               SUM(status = 'anchor-deleted') AS deleted_count,
+               COUNT(*) AS total
+        FROM memory_anchors
+        WHERE memory_id IN (${placeholders})
+        GROUP BY memory_id
+      `).all(...ids) as Array<{ memory_id: string; stale_count: number; deleted_count: number; total: number }>;
+      const byId = new Map(aggregateRows.map(r => [r.memory_id, r]));
+      for (const row of limitedSqlite) {
+        const agg = byId.get(row.id);
+        if (!agg) continue; // no anchors → leave undefined
+        if (agg.deleted_count > 0) row.anchor_status = "anchor-deleted";
+        else if (agg.stale_count > 0) row.anchor_status = "stale";
+        else row.anchor_status = "fresh";
+      }
+    }
+  }
+
   // Vault results — separate section appended after SQLite results
   const vaultEntries = db && config.vault.enabled
     ? searchVault(db, config.vault, params.query)
