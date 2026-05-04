@@ -21,6 +21,7 @@ import { handleMemoryAnalytics } from "./tools/analytics-tools.js";
 import { handleMemoryCompress } from "./tools/memory-compress.js";
 import { handleMemoryUpdate } from "./tools/memory-update.js";
 import { handleMemoryPin } from "./tools/memory-pin.js";
+import { handleMemoryEdgeCreate } from "./tools/memory-edge-create.js";
 import { handleMemoryExport, handleMemoryImport } from "./tools/memory-transfer.js";
 import { AnalyticsTracker, installFlushOnExit } from "./analytics/tracker.js";
 import { cleanupExpiredAnalytics } from "./analytics/retention.js";
@@ -382,6 +383,20 @@ server.tool(
   },
   async (params) => ({
     content: [{ type: "text" as const, text: await handleMemoryImport(db, params) }],
+  })
+);
+
+server.tool(
+  "memory_edge_create",
+  "Create a typed semantic edge between two memories. Edge types: causes, fixes, supersedes, contradicts, derives_from, relates_to. Useful for linking decisions to pitfalls, fixes to bugs, or marking superseded patterns.",
+  {
+    from_memory_id: z.string(),
+    to_memory_id: z.string(),
+    edge_type: z.enum(["causes", "fixes", "supersedes", "contradicts", "derives_from", "relates_to"]),
+    weight: z.number().min(0).max(1).default(1.0),
+  },
+  async (params) => ({
+    content: [{ type: "text" as const, text: await handleMemoryEdgeCreate(memRepo, db, params) }],
   })
 );
 
