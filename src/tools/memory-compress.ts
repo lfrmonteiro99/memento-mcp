@@ -32,22 +32,29 @@ export async function handleMemoryCompress(
   }
 
   let totalClusters = 0;
+  let totalPrunedClusters = 0;
+  let totalPrunedMemories = 0;
   let totalTokensBefore = 0;
   let totalTokensAfter = 0;
   const perProject: string[] = [];
 
   for (const projectId of projectIds) {
-    const results = runCompressionCycle(db, projectId, compCfg);
-    if (results.length === 0) continue;
-    totalClusters += results.length;
-    const tokensBefore = results.reduce((acc, r) => acc + r.tokens_before, 0);
-    const tokensAfter = results.reduce((acc, r) => acc + r.tokens_after, 0);
+    const { compressed, pruned } = runCompressionCycle(db, projectId, compCfg);
+    if (compressed.length === 0 && pruned.clusterCount === 0) continue;
+    totalClusters += compressed.length;
+    totalPrunedClusters += pruned.clusterCount;
+    totalPrunedMemories += pruned.memoryCount;
+    const tokensBefore = compressed.reduce((acc, r) => acc + r.tokens_before, 0);
+    const tokensAfter = compressed.reduce((acc, r) => acc + r.tokens_after, 0);
     totalTokensBefore += tokensBefore;
     totalTokensAfter += tokensAfter;
-    perProject.push(`  - project ${projectId}: ${results.length} cluster(s), ${tokensBefore}→${tokensAfter} tokens`);
+    const prunedNote = pruned.clusterCount > 0
+      ? `, pruned ${pruned.clusterCount} low-quality cluster(s) / ${pruned.memoryCount} mem(s)`
+      : "";
+    perProject.push(`  - project ${projectId}: ${compressed.length} cluster(s), ${tokensBefore}→${tokensAfter} tokens${prunedNote}`);
   }
 
-  if (totalClusters === 0) {
+  if (totalClusters === 0 && totalPrunedClusters === 0) {
     return "No clusters found to compress.";
   }
 

@@ -236,8 +236,8 @@ describe("end-to-end v2", () => {
       });
     }
 
-    const results = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
-    expect(results.length).toBeGreaterThanOrEqual(1);
+    const { compressed } = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
+    expect(compressed.length).toBeGreaterThanOrEqual(1);
 
     const compressedRow = db
       .prepare(

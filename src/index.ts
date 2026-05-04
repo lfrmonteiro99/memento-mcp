@@ -129,9 +129,12 @@ function runMaintenance(): void {
         .all() as Array<{ id: string }>;
       const compCfg = toCompressionConfig(config);
       for (const { id } of projects) {
-        const results = runCompressionCycle(db, id, compCfg);
-        if (results.length > 0) {
-          log.info(`Compressed ${results.length} cluster(s) in project ${id}`);
+        const summary = runCompressionCycle(db, id, compCfg);
+        if (summary.compressed.length > 0 || summary.pruned.clusterCount > 0) {
+          log.info(
+            `Compressed ${summary.compressed.length} cluster(s) ` +
+            `(pruned ${summary.pruned.clusterCount} low-quality cluster(s) / ${summary.pruned.memoryCount} memories) in project ${id}`,
+          );
         }
       }
     } catch (e) {

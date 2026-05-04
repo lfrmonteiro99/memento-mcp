@@ -4,6 +4,7 @@
 // running `memento-mcp anchors check` on a schedule should not pay for it.
 
 import type Database from "better-sqlite3";
+import { isAbsolute, relative } from "node:path";
 import { AnchorsRepo, type Anchor } from "../db/anchors.js";
 import {
   hasGit,
@@ -32,9 +33,17 @@ export function processAnchorStaleness(
 
   const anchorRepo = new AnchorsRepo(db);
 
-  // Match anchors both by relative path (typical) and any file_path that ends
-  // with the edited file — defensive for tools that pass absolute paths.
-  const candidates: Anchor[] = anchorRepo.listByFile(input.filePath);
+  // Claude Code's Edit tool passes absolute paths in tool_input.file_path.
+  // Anchors are typically stored as repo-relative paths (e.g. "src/foo.ts").
+  // Try the path as-given AND the cwd-relativised form so both conventions match.
+  const lookups = new Set<string>();
+  lookups.add(input.filePath);
+  if (isAbsolute(input.filePath)) {
+    const rel = relative(input.cwd, input.filePath);
+    if (rel && !rel.startsWith("..")) lookups.add(rel);
+  }
+  const candidates: Anchor[] = [];
+  for (const key of lookups) candidates.push(...anchorRepo.listByFile(key));
   const fresh = candidates.filter(a => a.status === "fresh");
   if (fresh.length === 0) return;
 

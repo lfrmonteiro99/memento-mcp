@@ -8,7 +8,7 @@ let _tmpCounter = 0;
 function tmpDbPath(): string {
   return join(tmpdir(), `memento-test-isolated-${Date.now()}-${++_tmpCounter}.sqlite`);
 }
-import type Database from "better-sqlite3";
+import Database from "better-sqlite3";
 
 describe("database", () => {
   let db: Database.Database;
@@ -191,6 +191,50 @@ describe("database", () => {
       "anchored_at", "commit_sha", "file_path", "id", "line_end", "line_start",
       "memory_id", "stale_reason", "stale_since", "status",
     ]);
+  });
+
+  it("upgrade-from-v9 path: existing v9 DB gains quality_score column on next open (regression for v8 ordering)", () => {
+    // This simulates a real user who already ran the codebase at v9 (memory_edges)
+    // before v8 (quality_score) and v10 (memory_anchors) existed. The migration loop
+    // skips v8 because 8 > 9 is false, so without a backfill they'd be left without
+    // the quality_score column — and any memory_store call would throw.
+    const path = join(tmpdir(), `memento-v9up-${process.pid}-${Date.now()}.sqlite`);
+    try {
+      // 1. Manually craft a v9-shaped DB without quality_score.
+      const raw = new Database(path);
+      raw.pragma("journal_mode = WAL");
+      raw.pragma("foreign_keys = ON");
+      raw.exec(`
+        CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, root_path TEXT UNIQUE,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+        CREATE TABLE memories (
+          id TEXT PRIMARY KEY, project_id TEXT REFERENCES projects(id),
+          memory_type TEXT NOT NULL DEFAULT 'fact', scope TEXT NOT NULL DEFAULT 'project',
+          title TEXT NOT NULL, body TEXT, tags TEXT,
+          importance_score REAL DEFAULT 0.5, confidence_score REAL DEFAULT 0.5,
+          access_count INTEGER NOT NULL DEFAULT 0, last_accessed_at TEXT,
+          is_pinned INTEGER NOT NULL DEFAULT 0, supersedes_memory_id TEXT,
+          source TEXT DEFAULT 'user', adaptive_score REAL DEFAULT 0.5,
+          claude_session_id TEXT, has_private INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          deleted_at TEXT);
+      `);
+      raw.pragma("user_version = 9");
+      raw.close();
+
+      // 2. Now open via createDatabase — migrations should bring it to current.
+      const upgraded = createDatabase(path);
+      try {
+        const cols = (upgraded.pragma("table_info(memories)") as Array<{ name: string }>).map(c => c.name);
+        expect(cols).toContain("quality_score");
+      } finally {
+        upgraded.close();
+      }
+    } finally {
+      rmSync(path, { force: true });
+    }
   });
 
   it("memory_anchors enforces status check constraint", () => {

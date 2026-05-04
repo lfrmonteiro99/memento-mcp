@@ -39,4 +39,10 @@ describe("computeStaleness", () => {
     const v = computeStaleness({ linesChanged: 0, rangeSize: 0, fileExists: false });
     expect(v.status).toBe("anchor-deleted");
   });
+
+  it("treats linesChanged=-1 (range overflows file) as stale", () => {
+    const v = computeStaleness({ linesChanged: -1, rangeSize: 10, fileExists: true });
+    expect(v.status).toBe("stale");
+    expect(v.reason).toMatch(/no longer present/);
+  });
 });

@@ -103,8 +103,8 @@ export async function handleMemorySearch(
       const placeholders = ids.map(() => "?").join(",");
       const aggregateRows = db.prepare(`
         SELECT memory_id,
-               SUM(status = 'stale') AS stale_count,
-               SUM(status = 'anchor-deleted') AS deleted_count,
+               SUM(CASE WHEN status = 'stale' THEN 1 ELSE 0 END) AS stale_count,
+               SUM(CASE WHEN status = 'anchor-deleted' THEN 1 ELSE 0 END) AS deleted_count,
                COUNT(*) AS total
         FROM memory_anchors
         WHERE memory_id IN (${placeholders})

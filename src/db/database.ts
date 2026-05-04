@@ -427,6 +427,26 @@ CREATE INDEX IF NOT EXISTS idx_memory_anchors_file ON memory_anchors(file_path);
 CREATE INDEX IF NOT EXISTS idx_memory_anchors_status ON memory_anchors(status) WHERE status != 'fresh';
 `,
   },
+  {
+    // v8 (quality_score) was added retroactively *after* v9 (memory_edges) had
+    // already shipped. Users who upgraded to v9 before v8 existed will skip v8
+    // because the loop guard is `migration.version > currentVersion`, and 8 > 9
+    // is false. v11 re-applies the v8 body idempotently for those DBs.
+    // Fresh installs run v8 normally and this becomes a no-op.
+    version: 11,
+    name: "quality_score_backfill",
+    sql: "",
+    afterSql: (db: Database.Database) => {
+      const cols = (db.pragma("table_info(memories)") as Array<{ name: string }>).map(c => c.name);
+      if (!cols.includes("quality_score")) {
+        db.exec("ALTER TABLE memories ADD COLUMN quality_score REAL NOT NULL DEFAULT 0.5");
+      }
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memories_quality
+        ON memories(project_id, quality_score) WHERE deleted_at IS NULL AND source = 'auto-capture'
+      `);
+    },
+  },
 ];
 
 const FTS_TRIGGERS_SQL = `

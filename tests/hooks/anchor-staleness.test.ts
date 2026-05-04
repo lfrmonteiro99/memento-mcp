@@ -105,6 +105,29 @@ describe("processAnchorStaleness (P4 Task 8)", () => {
     expect(anchors[0].status).toBe("fresh");
   });
 
+  it("matches anchors when hook receives an absolute path but anchor is stored as repo-relative", async () => {
+    await handleMemoryStore(memRepo, {
+      title: "x", content: "y",
+      project_path: repoDir,
+      anchors: [{ file_path: "src/foo.ts", line_start: 5, line_end: 15 }],
+    }, db);
+
+    const orig = Array.from({ length: 20 }, (_, i) => `line${i + 1}`);
+    for (let i = 4; i <= 11; i++) orig[i] = `MOD${i}`;
+    writeFileSync(join(repoDir, "src", "foo.ts"), orig.join("\n") + "\n");
+    execSync("git add . && git commit -q -m modify", { cwd: repoDir });
+
+    processAnchorStaleness(db, {
+      enabled: true,
+      cwd: repoDir,
+      toolName: "Edit",
+      filePath: join(repoDir, "src", "foo.ts"), // absolute, like Claude Code's Edit tool sends
+    });
+
+    const anchors = anchorRepo.listByFile("src/foo.ts");
+    expect(anchors[0].status).toBe("stale");
+  });
+
   it("marks anchor-deleted when file removed", async () => {
     await handleMemoryStore(memRepo, {
       title: "x", content: "y",

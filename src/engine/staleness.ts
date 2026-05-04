@@ -23,6 +23,11 @@ export function computeStaleness(input: StalenessInput): StalenessVerdict {
   if (!input.fileExists) {
     return { status: "anchor-deleted", reason: "file removed since anchor", changeFraction: 1 };
   }
+  // -1 sentinel from linesChangedSince: anchor range overflows current file
+  // (file shrunk past the anchor). Treat as stale rather than fresh.
+  if (input.linesChanged < 0) {
+    return { status: "stale", reason: "anchor range no longer present in file", changeFraction: 1 };
+  }
   if (input.rangeSize <= 0) {
     return { status: "fresh", reason: null, changeFraction: 0 };
   }

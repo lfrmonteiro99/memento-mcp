@@ -183,8 +183,8 @@ describe("runCompressionCycle (R5 atomic pipeline)", () => {
       );
     }
 
-    const results = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
-    expect(results.length).toBeGreaterThanOrEqual(1);
+    const { compressed } = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
+    expect(compressed.length).toBeGreaterThanOrEqual(1);
 
     const active = db
       .prepare(
@@ -195,7 +195,7 @@ describe("runCompressionCycle (R5 atomic pipeline)", () => {
     expect(active.c).toBeLessThan(ids.length);
 
     const logCount = db.prepare("SELECT COUNT(*) as c FROM compression_log").get() as any;
-    expect(logCount.c).toBe(results.length);
+    expect(logCount.c).toBe(compressed.length);
   });
 
   it("P0 Task 6: prunes auto-capture clusters whose median quality_score is below qualityFloor", () => {
@@ -220,13 +220,17 @@ describe("runCompressionCycle (R5 atomic pipeline)", () => {
     }
 
     const cfg = { ...DEFAULT_COMPRESSION_CONFIG, qualityFloor: 0.25 };
-    const results = runCompressionCycle(db, projectId, cfg);
+    const { compressed, pruned } = runCompressionCycle(db, projectId, cfg);
 
     // Low-quality cluster pruned, not merged: no compression result references its ids.
-    const compressedSourceIds = new Set(results.flatMap(r => r.source_memory_ids));
+    const compressedSourceIds = new Set(compressed.flatMap(r => r.source_memory_ids));
     for (const id of ids) {
       expect(compressedSourceIds.has(id)).toBe(false);
     }
+
+    // Pruned counts surfaced in the cycle summary.
+    expect(pruned.clusterCount).toBeGreaterThanOrEqual(1);
+    expect(pruned.memoryCount).toBe(5);
 
     // All 5 low-quality memories soft-deleted.
     const deleted = db
@@ -254,7 +258,7 @@ describe("runCompressionCycle (R5 atomic pipeline)", () => {
 
     const first = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
     const second = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
-    expect(first.length).toBeGreaterThanOrEqual(1);
-    expect(second.length).toBe(0);
+    expect(first.compressed.length).toBeGreaterThanOrEqual(1);
+    expect(second.compressed.length).toBe(0);
   });
 });

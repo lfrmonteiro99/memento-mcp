@@ -500,12 +500,19 @@ function clusterMedianQuality(cluster: CompressionCluster): number {
   return scores[Math.floor(scores.length / 2)];
 }
 
+export interface CompressionCycleSummary {
+  compressed: CompressionResult[];
+  pruned: { clusterCount: number; memoryCount: number };
+}
+
 export function runCompressionCycle(
   db: Database.Database,
   projectId: string,
   config: CompressionConfig,
-): CompressionResult[] {
-  const results: CompressionResult[] = [];
+): CompressionCycleSummary {
+  const compressed: CompressionResult[] = [];
+  let prunedClusters = 0;
+  let prunedMemories = 0;
 
   const tx = db.transaction(() => {
     const rows = db
@@ -525,15 +532,19 @@ export function runCompressionCycle(
     );
     for (const cluster of clusters) {
       if (floor > 0 && clusterMedianQuality(cluster) < floor) {
-        for (const m of cluster.memories) softDelete.run(m.id);
+        prunedClusters++;
+        for (const m of cluster.memories) {
+          softDelete.run(m.id);
+          prunedMemories++;
+        }
         continue;
       }
       const merged = mergeCluster(cluster);
       applyCompression(db, merged);
-      results.push(merged);
+      compressed.push(merged);
     }
   });
 
   tx();
-  return results;
+  return { compressed, pruned: { clusterCount: prunedClusters, memoryCount: prunedMemories } };
 }

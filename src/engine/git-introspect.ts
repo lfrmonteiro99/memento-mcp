@@ -64,8 +64,16 @@ export function fileExistsAtCommit(
  * `sinceSha` — i.e. commits newer than the anchor's pinned sha.
  *
  * Uses `git blame --line-porcelain` to get the originating sha for each line,
- * then `git merge-base --is-ancestor <chunk> <sinceSha>` to filter. Returns 0
- * on any git failure (file missing, range out of bounds, etc.).
+ * then `git merge-base --is-ancestor <chunk> <sinceSha>` to filter.
+ *
+ * Return semantics:
+ * - >0   : that many lines changed
+ * - 0    : range is unchanged (all blame chunks are ancestors of sinceSha)
+ * - -1   : range no longer exists (file shrunk past the anchor); caller
+ *          should treat this as "stale" rather than "fresh".
+ *
+ * `sinceSha` is the upper bound for "changes that count": lines authored
+ * at-or-before this sha are considered fresh.
  */
 export function linesChangedSince(
   repoDir: string,
@@ -79,7 +87,12 @@ export function linesChangedSince(
     ["blame", "--line-porcelain", "-L", `${start},${end}`, filePath],
     { allowFail: true },
   );
-  if (!blame) return 0;
+  if (!blame) {
+    // Could be: range exceeds file (file shrunk) OR file missing OR git error.
+    // Distinguish: if file exists at HEAD, it's a range overflow → stale signal.
+    if (fileExistsAtCommit(repoDir, filePath, "HEAD")) return -1;
+    return 0; // caller will independently detect fileExists=false → anchor-deleted
+  }
 
   const chunkShas = new Set<string>();
   for (const line of blame.split("\n")) {
