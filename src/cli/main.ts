@@ -850,6 +850,31 @@ This file describes the vault layout for memento-mcp routing.
   console.log(`\nImported ${created} memories (${dupes} duplicate(s) skipped${policyBlocked > 0 ? `, ${policyBlocked} blocked by policy` : ""}).`);
   db.close();
 
+} else if (command === "anchors") {
+  if (sub !== "check") {
+    console.error(`Unknown anchors command: ${sub ?? "(none)"}. Try: memento-mcp anchors check [--project=PATH]`);
+    process.exit(1);
+  }
+  const { runAnchorsCheck } = await import("./anchors.js");
+  const { createDatabase } = await import("../db/database.js");
+  const { getDefaultDbPath } = await import("../lib/config.js");
+
+  const projectArg = argv.find(a => a.startsWith("--project="));
+  const projectPath = projectArg ? projectArg.split("=", 2)[1] : process.cwd();
+  const db = createDatabase(getDefaultDbPath());
+  try {
+    const result = runAnchorsCheck({ db, projectPath });
+    if (result.notGitRepo) {
+      console.error(`Not a git repo: ${projectPath}`);
+      process.exit(1);
+    }
+    console.log(
+      `${result.scanned} anchors checked. ${result.stale} stale, ${result.deleted} anchor-deleted, ${result.fresh} fresh.`,
+    );
+  } finally {
+    db.close();
+  }
+
 } else if (command === "--version" || command === "-v") {
   console.log("memento-mcp v1.0.0");
 
