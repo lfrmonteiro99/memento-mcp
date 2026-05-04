@@ -37,6 +37,35 @@ export async function fetchWithTimeout(opts: FetchWithTimeoutOptions): Promise<F
   }
 }
 
+export interface RetryOptions {
+  attempts: number;
+  baseDelayMs: number;
+}
+
+/**
+ * Retry an async fn up to `attempts` times with exponential backoff
+ * (`baseDelayMs * 2^i` between attempts). Rethrows the last error if all
+ * attempts fail. Used by session-summarize-bin to ride out transient LLM
+ * timeouts before falling back to deterministic summary.
+ */
+export async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  opts: RetryOptions,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < opts.attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (i < opts.attempts - 1) {
+        await new Promise(r => setTimeout(r, opts.baseDelayMs * 2 ** i));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 /**
  * Extract a human-readable error message from a failed API response body.
  * Tries JSON .error.message, .message, .detail — falls back to raw text.
