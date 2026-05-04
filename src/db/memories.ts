@@ -31,6 +31,7 @@ export interface StoreParams {
   pin?: boolean;
   source?: string;           // M5: "user" (default) | "auto-capture" | "compression"
   claudeSessionId?: string;  // Issue #3: Claude Code session ID for linking memories to sessions
+  qualityScore?: number;     // P0 Task 4: heuristic 0..1 used by compressor prune (Task 6)
 }
 
 export interface SearchOptions {
@@ -102,16 +103,17 @@ export class MemoriesRepo {
     // Issue #3: claude_session_id column added in migration v5.
     // Issue #4: has_private column added in migration v6.
     const hasPrivateFlag = hasPrivate(cleanBody) ? 1 : 0;
+    const qualityScore = Math.max(0, Math.min(1, params.qualityScore ?? 0.5));
     this.db.prepare(`
       INSERT INTO memories (id, project_id, memory_type, scope, title, body, tags,
                             importance_score, is_pinned, supersedes_memory_id, source,
-                            claude_session_id, has_private,
+                            claude_session_id, has_private, quality_score,
                             created_at, updated_at, last_accessed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, projectId, params.memoryType ?? "fact", params.scope ?? "project",
            cleanTitle, cleanBody, tagsStr, params.importance ?? 0.5,
            params.pin ? 1 : 0, params.supersedesId || null, params.source ?? "user",
-           params.claudeSessionId ?? null, hasPrivateFlag,
+           params.claudeSessionId ?? null, hasPrivateFlag, qualityScore,
            now, now, now);
     return id;
   }

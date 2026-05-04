@@ -6,6 +6,7 @@ import type Database from "better-sqlite3";
 import type { MemoriesRepo } from "../db/memories.js";
 import { classify } from "../engine/classifier.js";
 import { isDuplicate, CooldownTracker } from "../engine/dedup.js";
+import { computeQualityScore, countSignalMarkers } from "./quality-score.js";
 
 export interface AutoCaptureConfig {
   enabled: boolean;
@@ -138,6 +139,14 @@ export function processAutoCapture(
     return { captured: false, reason: `duplicate of memory ${dupCheck.mergeTargetId}` };
   }
 
+  // P0 Task 4: heuristic quality score used by compressor (Task 6) to prune noise.
+  // classifier.ts has no `confidence` field; importance_score is its 0..1 strength proxy.
+  const qualityScore = computeQualityScore({
+    text: input.tool_response_text,
+    classifierConfidence: decision.memory.importance_score,
+    signalCount: countSignalMarkers(input.tool_response_text),
+  });
+
   // M5: Pass source directly to store() — no two-step INSERT+UPDATE.
   // Also thread projectId through so the memory is scoped correctly (K2/I3).
   // Issue #3: propagate claude_session_id so memories are linked to their session.
@@ -151,6 +160,7 @@ export function processAutoCapture(
     importance: decision.memory.importance_score,
     source: "auto-capture",
     claudeSessionId: input.claude_session_id,
+    qualityScore,
   });
 
   tracker.record(cooldownKey);
