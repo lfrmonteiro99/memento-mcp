@@ -150,11 +150,8 @@ export async function handleMemorySearch(
     );
 
     const includeDeleted = params.include_deleted_neighbours === true;
-    const fetchById = (id: string): any | null => {
-      if (!includeDeleted) return repo.getById(id);
-      // Bypass the deleted_at IS NULL filter so derives_from sources surface.
-      return db.prepare("SELECT * FROM memories WHERE id = ?").get(id) ?? null;
-    };
+    const fetchById = (id: string): any | null =>
+      includeDeleted ? repo.getByIdIncludingDeleted(id) : repo.getById(id);
 
     const collect = (
       hit: any,
@@ -222,9 +219,13 @@ export async function handleMemorySearch(
 
   // Append edge-neighbour section
   if (edgeNeighbours.length > 0) {
-    const lines = edgeNeighbours.map(en =>
-      `  ${en.arrow} [${en.edge_type}, w=${en.weight.toFixed(2)}] ${en.neighbour.id} ${en.neighbour.title} (edge neighbour of ${en.hit_id} ${en.hit_title})`
-    ).join("\n");
+    const lines = edgeNeighbours.map(en => {
+      // P3 Task 6 follow-up: tag soft-deleted neighbours so the user knows
+      // direct memory_get on this id will currently miss (sources of a
+      // compression are archived but still reachable via this traversal).
+      const archived = en.neighbour.deleted_at ? " [archived]" : "";
+      return `  ${en.arrow} [${en.edge_type}, w=${en.weight.toFixed(2)}] ${en.neighbour.id} ${en.neighbour.title}${archived} (edge neighbour of ${en.hit_id} ${en.hit_title})`;
+    }).join("\n");
     const section = `\n\nEdge neighbours (${edgeNeighbours.length}):\n${lines}`;
     output = output && output !== "No results found."
       ? output + section

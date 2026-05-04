@@ -18,6 +18,7 @@ export interface SchedulerOptions {
 
 export class ConsolidationScheduler {
   private timer: NodeJS.Timeout | null = null;
+  private inflight: Promise<void> | null = null;
   private readonly hostname = hostname();
   private readonly pid = process.pid;
 
@@ -25,19 +26,47 @@ export class ConsolidationScheduler {
 
   start(): void {
     if (this.timer) return;
+    // Boot recovery: any 'running' row left dangling from a previous crashed
+    // run keeps future leaders blocked until the 5-minute staleness window
+    // elapses. Sweep them on start so the scheduler isn't paralysed by the
+    // ghost of a dead process.
+    this.recoverOrphanedRuns();
+
     this.timer = setInterval(() => {
-      void this.runOnce().catch((e) => {
-        // Never throw out of the timer — the scheduler keeps the server alive.
-        logger.warn(`consolidation tick failed: ${e instanceof Error ? e.message : String(e)}`);
-      });
+      // Belt-and-braces: skip if a previous tick is still running.
+      if (this.inflight) return;
+      this.inflight = this.runOnce()
+        .catch((e) => {
+          logger.warn(`consolidation tick failed: ${e instanceof Error ? e.message : String(e)}`);
+        })
+        .finally(() => { this.inflight = null; });
     }, this.opts.intervalMs);
-    // Don't keep the event loop alive solely for the scheduler.
     if (typeof this.timer.unref === "function") this.timer.unref();
   }
 
-  stop(): void {
+  /** Stop the timer AND wait for any in-flight tick to finish so callers can
+   * safely close the DB right after. */
+  async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.inflight) {
+      try { await this.inflight; } catch { /* already logged in start() */ }
+    }
+  }
+
+  private recoverOrphanedRuns(): void {
+    try {
+      const result = this.db.prepare(
+        `UPDATE consolidation_runs
+         SET status = 'failed', finished_at = datetime('now')
+         WHERE status = 'running' AND started_at <= datetime('now', '-5 minutes')`,
+      ).run();
+      if (result.changes > 0) {
+        logger.info(`consolidation: marked ${result.changes} orphaned run(s) as failed on boot`);
+      }
+    } catch (e) {
+      logger.warn(`consolidation: orphan recovery failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   /** One-shot tick. Public for CLI `consolidate --now` and tests. */
@@ -84,10 +113,16 @@ export class ConsolidationScheduler {
   /**
    * Insert a 'running' row only if no other run is 'running' within the last
    * 5 minutes. Returns the new row id, or null if a fresh lock exists.
-   * Wrapped in a transaction so the SELECT-then-INSERT is atomic.
+   *
+   * Uses BEGIN IMMEDIATE (.immediate()) so the SELECT-then-INSERT serialises
+   * across processes. With plain BEGIN DEFERRED (the default), two processes
+   * could both pass the SELECT on a stale snapshot and both INSERT, ending up
+   * with two concurrent 'running' rows. IMMEDIATE acquires RESERVED up-front;
+   * the second writer blocks (within busy_timeout) until the first commits and
+   * then sees the fresh row.
    */
   private acquireLock(): number | null {
-    return this.db.transaction(() => {
+    const tx = this.db.transaction(() => {
       const fresh = this.db.prepare(
         `SELECT id FROM consolidation_runs
          WHERE status = 'running' AND started_at > datetime('now', '-5 minutes')
@@ -100,6 +135,7 @@ export class ConsolidationScheduler {
          VALUES (NULL, datetime('now'), 'running', ?, ?)`,
       ).run(this.hostname, this.pid);
       return Number(result.lastInsertRowid);
-    })();
+    });
+    return tx.immediate();
   }
 }

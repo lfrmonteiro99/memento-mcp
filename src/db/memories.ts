@@ -122,6 +122,14 @@ export class MemoriesRepo {
     return this.db.prepare("SELECT * FROM memories WHERE id = ? AND deleted_at IS NULL").get(id) ?? null;
   }
 
+  /** P3 Task 6: returns a memory regardless of deleted_at. Used by
+   * memory_search when traversing derives_from edges with
+   * include_deleted_neighbours, so the consolidation provenance is reachable
+   * without raw SQL bypassing future invariants added to getById. */
+  getByIdIncludingDeleted(id: string): any | null {
+    return this.db.prepare("SELECT * FROM memories WHERE id = ?").get(id) ?? null;
+  }
+
   search(query: string, opts: SearchOptions = {}): any[] {
     const ftsQuery = buildFtsQuery(query);
     if (!ftsQuery) return [];

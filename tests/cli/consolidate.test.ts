@@ -29,7 +29,10 @@ describe("memento-mcp consolidate --now (P3 Task 5)", () => {
       });
     }
     db.prepare(
-      "UPDATE memories SET created_at = '2026-03-04T12:00:00Z' WHERE project_id = ?",
+      `UPDATE memories
+       SET created_at = '2026-03-04T12:00:00Z',
+           last_accessed_at = '2026-03-04T12:00:00Z'
+       WHERE project_id = ?`,
     ).run(projectId);
     db.close();
   });

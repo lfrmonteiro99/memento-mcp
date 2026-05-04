@@ -168,17 +168,22 @@ if (config.consolidation.enabled) {
   consolidationScheduler.start();
 }
 
-// Graceful shutdown
-function shutdown(): void {
+// Graceful shutdown — async so we can drain an in-flight consolidation tick
+// before closing the DB underneath it (otherwise a tick that's mid-`git blame`
+// or mid-clustering can throw "Database is closed" and leave a dangling
+// 'running' row that blocks future leaders for 5 minutes).
+async function shutdown(): Promise<void> {
   if (pruneTimer) clearInterval(pruneTimer);
-  consolidationScheduler?.stop();
+  if (consolidationScheduler) {
+    try { await consolidationScheduler.stop(); } catch { /* logged inside */ }
+  }
   try { analyticsTracker.flush(); } catch { /* ignore */ }
   disposeFlush();
   try { db.close(); } catch { /* ignore */ }
   process.exit(0);
 }
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGTERM", () => { void shutdown(); });
+process.on("SIGINT", () => { void shutdown(); });
 
 const server = new McpServer({ name: "memento-mcp", version: "1.0.0" });
 

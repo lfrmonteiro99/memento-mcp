@@ -110,6 +110,8 @@ describe("memory_search annotates results with anchor_status (P4 Task 7)", () =>
     expect(out).toContain("step A");
     expect(out).toContain("step B");
     expect(out).toContain("derives_from");
+    // [archived] marker disambiguates them from live neighbours.
+    expect(out).toContain("[archived]");
   });
 
   it("P3 Task 6: include_deleted_neighbours=false hides soft-deleted neighbours (default)", async () => {

@@ -124,8 +124,10 @@ export function clusterMemories(
     // P3 Task 2: when decay_floor is set, exclude rows whose exponential decay
     // (halflife=14d) is still above the floor — those are recent enough that
     // the user is likely still iterating and consolidation would be premature.
+    // Gate on last_accessed_at when present (matches applyDecayV2 semantics);
+    // fall back to created_at for rows never re-touched since insertion.
     .filter(m => decayFloor === undefined
-      || computeExponentialDecay(daysSince(m.created_at), 14) <= decayFloor)
+      || computeExponentialDecay(daysSince(m.last_accessed_at ?? m.created_at), 14) <= decayFloor)
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, MAX_CLUSTERING_MEMORIES);
 
@@ -487,10 +489,10 @@ export function applyCompression(db: Database.Database, result: CompressionResul
     const softDelete = db.prepare(
       "UPDATE memories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
     );
-    // P3 Task 3: emit derives_from edge from compressed → source. Direct insert
-    // (rather than EdgesRepo.create) keeps the operation inside this transaction
-    // and avoids the validation overhead — the edge_type is a string literal we
-    // control here, and the table's CHECK constraint enforces the enum.
+    // P3 Task 3: emit derives_from edge from compressed → source. Direct INSERT
+    // OR IGNORE inside the transaction; the table CHECK enforces edge_type, and
+    // the freshly-minted compressed `id` cannot equal any source id so the
+    // self-loop guard EdgesRepo.create would add is moot here.
     const edgeInsert = db.prepare(
       `INSERT OR IGNORE INTO memory_edges(from_memory_id, to_memory_id, edge_type, weight)
        VALUES (?, ?, 'derives_from', 1.0)`,

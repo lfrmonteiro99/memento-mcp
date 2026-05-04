@@ -174,6 +174,25 @@ describe("clusterMemories", () => {
     }
   });
 
+  it("decay_floor uses last_accessed_at when present (recently-read old row stays out)", () => {
+    setClock(() => new Date("2026-05-04T12:00:00Z").getTime());
+    try {
+      // Created 60 days ago BUT accessed yesterday → recent decay → must NOT cluster.
+      const m1 = makeMemory("a1", "Edit: foo.ts (recent access)", "deadlock pattern", ["edit"], "2026-03-04T10:00:00Z", {
+        last_accessed_at: "2026-05-03T10:00:00Z",
+      });
+      const m2 = makeMemory("a2", "Edit: foo.ts (recent access)", "deadlock pattern again", ["edit"], "2026-03-05T10:00:00Z", {
+        last_accessed_at: "2026-05-03T11:00:00Z",
+      });
+      const cfg = { ...DEFAULT_COMPRESSION_CONFIG, decay_floor: 0.6 };
+      const clusters = clusterMemories([m1, m2], cfg);
+      // Both excluded by recent access → no cluster meets min_cluster_size.
+      expect(clusters).toHaveLength(0);
+    } finally {
+      resetClock();
+    }
+  });
+
   it("decay_floor undefined → no filter (backward compatible)", () => {
     setClock(() => new Date("2026-05-04T12:00:00Z").getTime());
     try {
