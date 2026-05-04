@@ -192,6 +192,32 @@ describe("v2 config fields", () => {
   });
 });
 
+describe("config defaults", () => {
+  it("default embeddings provider is 'local' with MiniLM-L6 384-dim", () => {
+    const cfg = loadConfig("/nonexistent/path/that/does/not/exist.toml");
+    expect(cfg.search.embeddings.enabled).toBe(true);
+    expect(cfg.search.embeddings.provider).toBe("local");
+    expect(cfg.search.embeddings.model).toBe("Xenova/all-MiniLM-L6-v2");
+    expect(cfg.search.embeddings.dim).toBe(384);
+  });
+
+  it("user TOML can override provider back to openai", () => {
+    const { writeFileSync: wfs, mkdtempSync } = require("node:fs");
+    const { tmpdir: td } = require("node:os");
+    const { join: pjoin } = require("node:path");
+    const dir = mkdtempSync(pjoin(td(), "memento-cfg-"));
+    const path = pjoin(dir, "config.toml");
+    wfs(
+      path,
+      `[search.embeddings]\nenabled = true\nprovider = "openai"\nmodel = "text-embedding-3-small"\ndim = 1536\n`,
+    );
+    const cfg = loadConfig(path);
+    expect(cfg.search.embeddings.provider).toBe("openai");
+    expect(cfg.search.embeddings.model).toBe("text-embedding-3-small");
+    expect(cfg.search.embeddings.dim).toBe(1536);
+  });
+});
+
 describe("embeddings config", () => {
   const tmpDir = join(tmpdir(), `memento-config-emb-${process.pid}-${randomUUID()}`);
 
@@ -199,11 +225,11 @@ describe("embeddings config", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("DEFAULT_CONFIG has embeddings disabled by default", () => {
-    expect(DEFAULT_CONFIG.search.embeddings.enabled).toBe(false);
-    expect(DEFAULT_CONFIG.search.embeddings.provider).toBe("openai");
-    expect(DEFAULT_CONFIG.search.embeddings.model).toBe("text-embedding-3-small");
-    expect(DEFAULT_CONFIG.search.embeddings.dim).toBe(1536);
+  it("DEFAULT_CONFIG has embeddings enabled=true, provider=local, MiniLM-L6-v2, dim=384 by default", () => {
+    expect(DEFAULT_CONFIG.search.embeddings.enabled).toBe(true);
+    expect(DEFAULT_CONFIG.search.embeddings.provider).toBe("local");
+    expect(DEFAULT_CONFIG.search.embeddings.model).toBe("Xenova/all-MiniLM-L6-v2");
+    expect(DEFAULT_CONFIG.search.embeddings.dim).toBe(384);
     expect(DEFAULT_CONFIG.search.embeddings.topK).toBe(20);
     expect(DEFAULT_CONFIG.search.embeddings.similarityThreshold).toBe(0.5);
     expect(DEFAULT_CONFIG.search.embeddings.batchSize).toBe(32);

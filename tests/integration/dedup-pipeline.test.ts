@@ -48,9 +48,14 @@ describe("dedup-pipeline integration", () => {
   });
 
   it("embeddings disabled = full no-op (no API calls)", async () => {
-    // config with embeddings.enabled = false (the default)
-    const config = { ...DEFAULT_CONFIG };
-    // embeddings.enabled is false by default — dedup must be a no-op
+    // Explicitly disable embeddings to test the no-op path regardless of default.
+    const config = {
+      ...DEFAULT_CONFIG,
+      search: {
+        ...DEFAULT_CONFIG.search,
+        embeddings: { ...DEFAULT_CONFIG.search.embeddings, enabled: false },
+      },
+    };
     expect(config.search.embeddings.enabled).toBe(false);
 
     const result = await handleMemoryStore(
