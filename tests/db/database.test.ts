@@ -174,4 +174,13 @@ describe("database", () => {
       rmSync(path, { force: true });
     }
   });
+
+  it("memories table has quality_score column after v8", () => {
+    const cols = db.pragma("table_info(memories)") as Array<{ name: string }>;
+    expect(cols.map(c => c.name)).toContain("quality_score");
+  });
+
+  it("user_version is at least 9 (v8 + v9 both applied)", () => {
+    expect(db.pragma("user_version", { simple: true })).toBeGreaterThanOrEqual(9);
+  });
 });

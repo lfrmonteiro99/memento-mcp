@@ -348,7 +348,21 @@ CREATE TABLE IF NOT EXISTS sync_file_hashes (
 CREATE INDEX IF NOT EXISTS idx_sync_file_hashes_project ON sync_file_hashes(project_id);
 `,
   },
-  // v8 is reserved for P0 (quality_score). Do not insert here.
+  {
+    version: 8,
+    name: "quality_score",
+    sql: "",
+    afterSql: (db: Database.Database) => {
+      const cols = (db.pragma("table_info(memories)") as Array<{ name: string }>).map(c => c.name);
+      if (!cols.includes("quality_score")) {
+        db.exec("ALTER TABLE memories ADD COLUMN quality_score REAL NOT NULL DEFAULT 0.5");
+      }
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memories_quality
+        ON memories(project_id, quality_score) WHERE deleted_at IS NULL AND source = 'auto-capture'
+      `);
+    },
+  },
   {
     version: 9,
     name: "memory_edges",
