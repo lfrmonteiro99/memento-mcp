@@ -850,6 +850,34 @@ This file describes the vault layout for memento-mcp routing.
   console.log(`\nImported ${created} memories (${dupes} duplicate(s) skipped${policyBlocked > 0 ? `, ${policyBlocked} blocked by policy` : ""}).`);
   db.close();
 
+} else if (command === "consolidate" && sub === "--now") {
+  const { ConsolidationScheduler } = await import("../engine/consolidation-scheduler.js");
+  const { createDatabase } = await import("../db/database.js");
+  const { loadConfig, getDefaultConfigPath, getDefaultDbPath } = await import("../lib/config.js");
+
+  const cfg = loadConfig(process.env.MEMENTO_CONFIG_PATH ?? getDefaultConfigPath());
+  const dbPath = process.env.MEMENTO_DB_PATH ?? (cfg.database.path || getDefaultDbPath());
+  const db = createDatabase(dbPath);
+  try {
+    const sched = new ConsolidationScheduler(db, {
+      intervalMs: 60_000,
+      decayFloor: cfg.consolidation.decayFloor,
+    });
+    await sched.runOnce();
+    const last = db.prepare(
+      "SELECT status, clusters_seen, merged_count, pruned_count FROM consolidation_runs ORDER BY id DESC LIMIT 1",
+    ).get() as { status: string; clusters_seen: number; merged_count: number; pruned_count: number } | undefined;
+    if (last) {
+      console.log(
+        `consolidation ${last.status}: clusters_seen=${last.clusters_seen} merged=${last.merged_count} pruned=${last.pruned_count}`,
+      );
+    } else {
+      console.log("consolidation: no run recorded (skipped or no projects).");
+    }
+  } finally {
+    db.close();
+  }
+
 } else if (command === "anchors") {
   if (sub !== "check") {
     console.error(`Unknown anchors command: ${sub ?? "(none)"}. Try: memento-mcp anchors check [--project=PATH]`);

@@ -139,6 +139,15 @@ export interface Config {
     enabled: boolean;
     debounceMs: number;
   };
+  /** P3: scheduled consolidation pass. OFF by default. */
+  consolidation: {
+    enabled: boolean;
+    /** Tick period in ms. Default 6h. */
+    intervalMs: number;
+    /** Only memories whose exponential decay (halflife=14d) is at or below
+     * this floor are eligible for consolidation. 0.6 ≈ ≥10 days old. */
+    decayFloor: number;
+  };
 }
 
 export const DEFAULT_VAULT_CONFIG: VaultConfig = {
@@ -273,6 +282,11 @@ export const DEFAULT_CONFIG: Config = {
   anchorStaleness: {
     enabled: false,
     debounceMs: 5000,
+  },
+  consolidation: {
+    enabled: false,
+    intervalMs: 6 * 60 * 60 * 1000, // 6 hours
+    decayFloor: 0.6,
   },
 };
 
@@ -434,6 +448,12 @@ export function loadConfig(configPath: string): Config {
     const a = toml.anchor_staleness;
     if (a.enabled != null) config.anchorStaleness.enabled = Boolean(a.enabled);
     if (a.debounce_ms != null) config.anchorStaleness.debounceMs = Number(a.debounce_ms);
+  }
+  if (toml.consolidation) {
+    const c = toml.consolidation;
+    if (c.enabled != null) config.consolidation.enabled = Boolean(c.enabled);
+    if (c.interval_ms != null) config.consolidation.intervalMs = Number(c.interval_ms);
+    if (c.decay_floor != null) config.consolidation.decayFloor = Number(c.decay_floor);
   }
   if (toml.sync) {
     const s = toml.sync;

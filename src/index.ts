@@ -28,6 +28,7 @@ import { AnalyticsTracker, installFlushOnExit } from "./analytics/tracker.js";
 import { cleanupExpiredAnalytics } from "./analytics/retention.js";
 import { runCompressionCycle } from "./engine/compressor.js";
 import { toCompressionConfig } from "./lib/compression-config.js";
+import { ConsolidationScheduler } from "./engine/consolidation-scheduler.js";
 import { configureFileMemoryCache } from "./lib/file-memory.js";
 import { promoteImportanceFromUtility } from "./engine/importance-promoter.js";
 import { collectPoliciesPerProject } from "./lib/policy.js";
@@ -154,9 +155,23 @@ if (config.pruning.enabled) {
   pruneTimer.unref?.();
 }
 
+// P3 Task 5: opt-in consolidation scheduler. OFF by default; enable via
+// [consolidation] enabled = true in memento-mcp.toml. When on, decay-gated
+// clusters get rolled up into 'compression' memories with derives_from edges
+// to their sources, and the sources are soft-deleted.
+let consolidationScheduler: ConsolidationScheduler | null = null;
+if (config.consolidation.enabled) {
+  consolidationScheduler = new ConsolidationScheduler(db, {
+    intervalMs: config.consolidation.intervalMs,
+    decayFloor: config.consolidation.decayFloor,
+  });
+  consolidationScheduler.start();
+}
+
 // Graceful shutdown
 function shutdown(): void {
   if (pruneTimer) clearInterval(pruneTimer);
+  consolidationScheduler?.stop();
   try { analyticsTracker.flush(); } catch { /* ignore */ }
   disposeFlush();
   try { db.close(); } catch { /* ignore */ }
