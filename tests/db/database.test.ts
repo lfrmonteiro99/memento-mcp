@@ -237,6 +237,16 @@ describe("database", () => {
     }
   });
 
+  it("creates consolidation_runs table at v12 with leader-election columns", () => {
+    expect(db.pragma("user_version", { simple: true })).toBeGreaterThanOrEqual(12);
+    const cols = db.pragma("table_info(consolidation_runs)") as Array<{ name: string }>;
+    expect(cols.map(c => c.name).sort()).toEqual([
+      "clusters_seen", "finished_at", "hostname", "id",
+      "merged_count", "pid", "project_id", "pruned_count",
+      "started_at", "status",
+    ]);
+  });
+
   it("memory_anchors enforces status check constraint", () => {
     expect(() => {
       // Need a real memory id (FK)

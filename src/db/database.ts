@@ -447,6 +447,30 @@ CREATE INDEX IF NOT EXISTS idx_memory_anchors_status ON memory_anchors(status) W
       `);
     },
   },
+  {
+    // P3 Task 1: audit table for the consolidation scheduler. Each tick inserts
+    // a 'running' row, then updates to 'finished'/'failed' on completion. Leader
+    // election uses a 5-minute staleness window over the most recent 'running'.
+    version: 12,
+    name: "consolidation_runs",
+    sql: `
+CREATE TABLE IF NOT EXISTS consolidation_runs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id    TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  started_at    TEXT NOT NULL,
+  finished_at   TEXT,
+  clusters_seen INTEGER NOT NULL DEFAULT 0,
+  merged_count  INTEGER NOT NULL DEFAULT 0,
+  pruned_count  INTEGER NOT NULL DEFAULT 0,
+  status        TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','finished','failed')),
+  hostname      TEXT,
+  pid           INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_consolidation_runs_project ON consolidation_runs(project_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_consolidation_runs_status ON consolidation_runs(status, started_at);
+`,
+  },
 ];
 
 const FTS_TRIGGERS_SQL = `
