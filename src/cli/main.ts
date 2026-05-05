@@ -1,8 +1,24 @@
 #!/usr/bin/env node
 import { argv } from "node:process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const [, , command, sub] = argv;
+
+/** Read the published package.json at runtime so --version stays in sync with
+ *  the version `npm publish` shipped. The bundled CLI lives at dist/cli/main.js;
+ *  package.json sits at the package root (../../package.json). */
+function readPackageVersion(): string {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkgPath = join(here, "..", "..", "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: string };
+    return pkg.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 if (command === "install") {
   const { runInstaller } = await import("./install.js");
@@ -916,7 +932,7 @@ This file describes the vault layout for memento-mcp routing.
   }
 
 } else if (command === "--version" || command === "-v") {
-  console.log("memento-mcp v1.0.0");
+  console.log(`memento-mcp v${readPackageVersion()}`);
 
 } else {
   await import("../index.js");
