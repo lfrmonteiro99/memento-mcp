@@ -5,12 +5,20 @@ import type { EmbeddingsRepo } from "../db/embeddings.js";
 import type { Config } from "../lib/config.js";
 import { rebuildVaultIndex } from "../engine/vault-index.js";
 import { persistMemoryToVault } from "../engine/vault-writer.js";
-import { createProvider } from "../engine/embeddings/provider.js";
+import { createProvider, type EmbeddingProvider } from "../engine/embeddings/provider.js";
 import { findDuplicate } from "../engine/embeddings/dedup.js";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
 import { validateTags } from "../engine/privacy.js";
 import { loadProjectPolicy } from "../lib/policy.js";
 import { pushSingleMemory } from "../sync/git-sync.js";
+import { AnchorsRepo } from "../db/anchors.js";
+import { hasGit, currentCommitSha } from "../engine/git-introspect.js";
+
+export interface AnchorInput {
+  file_path: string;
+  line_start?: number;
+  line_end?: number;
+}
 
 const logger = createLogger(logLevelFromEnv());
 
@@ -21,7 +29,16 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
   persist_to_vault?: boolean; vault_mode?: "create" | "create_or_update";
   vault_kind?: string; vault_folder?: string; vault_note_title?: string;
   dedup?: "strict" | "warn" | "off";
-}, db?: Database.Database, config?: Config, embRepo?: EmbeddingsRepo): Promise<string> {
+  /** P4 Task 5: pin the memory to one or more code locations.
+   *
+   * commit_sha is auto-populated to the project's HEAD at store time and used
+   * later as the upper bound for "changes that count": lines whose blame chunk
+   * is an ancestor of this sha are considered fresh, lines from newer commits
+   * trigger staleness. The same sha is applied to every anchor in the batch
+   * (not the file's last-modifying commit) — this trades precision for
+   * predictability and avoids per-anchor `git log` calls on the hot path. */
+  anchors?: AnchorInput[];
+}, db?: Database.Database, config?: Config, embRepo?: EmbeddingsRepo, providerOverride?: EmbeddingProvider): Promise<string> {
   // Issue #4: validate balanced <private> tags before storing.
   const tagValidation = validateTags(params.content ?? "");
   if (!tagValidation.valid) {
@@ -122,6 +139,25 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
     pin: params.pin,
   });
 
+  // P4 Task 5: persist anchors and auto-populate commit_sha when in a git repo.
+  if (params.anchors?.length && db) {
+    const anchorRepo = new AnchorsRepo(db);
+    const sha = hasGit(projectPath) ? currentCommitSha(projectPath) : undefined;
+    for (const a of params.anchors) {
+      try {
+        anchorRepo.attach({
+          memory_id: id,
+          file_path: a.file_path,
+          line_start: a.line_start,
+          line_end: a.line_end,
+          commit_sha: sha,
+        });
+      } catch (e) {
+        logger.warn(`anchor attach failed for ${id} (${a.file_path}): ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
   // Issue #11: auto-push to file when scope=team and autoPushOnStore=true
   if (db && config && config.sync.enabled && config.sync.autoPushOnStore && (params.scope === "team")) {
     try {
@@ -133,7 +169,7 @@ export async function handleMemoryStore(repo: MemoriesRepo, params: {
 
   // Fire-and-forget embedding — do NOT await, store must remain fast.
   if (config && embRepo) {
-    const provider = createProvider(config.search.embeddings);
+    const provider = providerOverride ?? createProvider(config.search.embeddings);
     if (provider) {
       provider.embed([`${params.title}\n\n${params.content}`])
         .then(([v]) => embRepo.upsert(id, provider.model, v))

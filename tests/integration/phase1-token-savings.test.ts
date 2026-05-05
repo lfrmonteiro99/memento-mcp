@@ -41,9 +41,9 @@ describe("Phase 1 integration: token savings validation", () => {
   });
   afterEach(() => { db.close(); rmSync(dbPath, { force: true }); });
 
-  it("database has schema version 8 (v8 migration has landed)", () => {
+  it("database has schema version at least 11 (latest migration has landed)", () => {
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(8);
+    expect(version).toBeGreaterThanOrEqual(11);
   });
 
   it("memories table has source and adaptive_score columns", () => {

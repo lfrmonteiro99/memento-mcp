@@ -196,6 +196,21 @@ describe("auto-capture hook (processAutoCapture logic)", () => {
     }
   });
 
+  it("P0 Task 4: auto-captured memory persists quality_score from heuristic", () => {
+    const result = processAutoCapture(db, memRepo, {
+      tool_name: "Bash",
+      tool_input: { command: "git log --oneline -5" },
+      // Three error markers + lots of padding ⇒ heuristic should yield > 0.5.
+      tool_response_text:
+        "Error: x\nError: y\nError: z\nFix: cast to string\n" + "padding line\n".repeat(50),
+      session_id: "s1",
+    }, defaultConfig);
+
+    expect(result.captured).toBe(true);
+    const row = db.prepare("SELECT quality_score FROM memories WHERE id = ?").get(result.memoryId!) as { quality_score: number };
+    expect(row.quality_score).toBeGreaterThan(0.5);
+  });
+
   it("C5: evicts oldest session tracker when limit of 100 is reached", () => {
     // Create 100 sessions to fill the map
     for (let i = 0; i < 100; i++) {

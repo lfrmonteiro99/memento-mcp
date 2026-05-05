@@ -9,6 +9,9 @@ import { createLogger, logLevelFromEnv } from "../lib/logger.js";
 import { validateTags } from "../engine/privacy.js";
 import { loadProjectPolicy } from "../lib/policy.js";
 import { pushSingleMemory } from "../sync/git-sync.js";
+import { AnchorsRepo } from "../db/anchors.js";
+import { hasGit, currentCommitSha } from "../engine/git-introspect.js";
+import type { AnchorInput } from "./memory-store.js";
 
 const logger = createLogger(logLevelFromEnv());
 
@@ -27,6 +30,10 @@ export async function handleMemoryUpdate(
     pinned?: boolean;
     project_path?: string;
     dedup?: "strict" | "warn" | "off";
+    /** P4 Task 5: append anchors to this memory. */
+    add_anchors?: AnchorInput[];
+    /** P4 Task 5: detach anchors by id. */
+    remove_anchor_ids?: number[];
   },
   config?: Config,
   embRepo?: EmbeddingsRepo,
@@ -69,8 +76,11 @@ export async function handleMemoryUpdate(
   if (params.memory_type !== undefined) patch.memoryType = params.memory_type;
   if (params.pinned !== undefined) patch.pinned = params.pinned;
 
-  if (Object.keys(patch).length === 0) {
-    return "No fields to update. Pass at least one of: title, content, tags, importance, memory_type, pinned.";
+  const anchorOps =
+    (params.add_anchors?.length ?? 0) > 0 || (params.remove_anchor_ids?.length ?? 0) > 0;
+
+  if (Object.keys(patch).length === 0 && !anchorOps) {
+    return "No fields to update. Pass at least one of: title, content, tags, importance, memory_type, pinned, add_anchors, remove_anchor_ids.";
   }
 
   const current = repo.getById(params.memory_id);
@@ -78,9 +88,35 @@ export async function handleMemoryUpdate(
     return `Memory not found: ${params.memory_id}`;
   }
 
-  const ok = repo.update(params.memory_id, patch);
-  if (!ok) {
-    return `Memory not found: ${params.memory_id}`;
+  if (Object.keys(patch).length > 0) {
+    const ok = repo.update(params.memory_id, patch);
+    if (!ok) {
+      return `Memory not found: ${params.memory_id}`;
+    }
+  }
+
+  // P4 Task 5: anchor add/remove operations.
+  if (anchorOps && db) {
+    const anchorRepo = new AnchorsRepo(db);
+    if (params.add_anchors?.length) {
+      const sha = hasGit(projectPath) ? currentCommitSha(projectPath) : undefined;
+      for (const a of params.add_anchors) {
+        try {
+          anchorRepo.attach({
+            memory_id: params.memory_id,
+            file_path: a.file_path,
+            line_start: a.line_start,
+            line_end: a.line_end,
+            commit_sha: sha,
+          });
+        } catch (e) {
+          logger.warn(`anchor attach failed for ${params.memory_id} (${a.file_path}): ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+    for (const id of params.remove_anchor_ids ?? []) {
+      anchorRepo.detach(id);
+    }
   }
 
   // Fire-and-forget re-embedding when title or body changes — do NOT await.

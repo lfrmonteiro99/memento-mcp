@@ -192,6 +192,7 @@ This file describes the vault layout for memento-mcp routing.
   const { loadConfig, getDefaultConfigPath, getDefaultDbPath } = await import("../lib/config.js");
   const { createDatabase } = await import("../db/database.js");
   const { EmbeddingsRepo } = await import("../db/embeddings.js");
+  const { MemoriesRepo } = await import("../db/memories.js");
   const { createProvider } = await import("../engine/embeddings/provider.js");
 
   const config = loadConfig(getDefaultConfigPath());
@@ -201,16 +202,28 @@ This file describes the vault layout for memento-mcp routing.
   let model = config.search.embeddings.model;
   let limit: number | undefined;
   let dryRun = false;
+  let projectArg: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--model" && args[i + 1]) { model = args[++i]; }
     else if (args[i] === "--limit" && args[i + 1]) { limit = Number(args[++i]); }
     else if (args[i] === "--dry-run") { dryRun = true; }
+    else if (args[i] === "--project" && args[i + 1]) { projectArg = args[++i]; }
   }
 
   const db = createDatabase(config.database.path || getDefaultDbPath());
   const embRepo = new EmbeddingsRepo(db);
-  const missing = embRepo.countMissing(model);
+
+  let projectId: string | undefined;
+  if (projectArg) {
+    const { resolve: pathResolve } = await import("node:path");
+    const abs = pathResolve(projectArg);
+    const memRepo = new MemoriesRepo(db);
+    projectId = memRepo.ensureProject(abs);
+    console.log(`Backfill scoped to project: ${abs} (id=${projectId})`);
+  }
+
+  const missing = embRepo.countMissing(model, projectId);
 
   if (dryRun) {
     console.log(`Would embed ${missing} memories (model: ${model}).`);
@@ -230,7 +243,7 @@ This file describes the vault layout for memento-mcp routing.
   const total = limit !== undefined ? Math.min(limit, missing) : missing;
   const batch: Array<{ id: string; title: string; body: string }> = [];
 
-  for (const mem of embRepo.iterateMissing(model, batchSize)) {
+  for (const mem of embRepo.iterateMissing(model, batchSize, projectId)) {
     if (limit !== undefined && processed >= limit) break;
     batch.push(mem);
     if (batch.length >= batchSize) {
@@ -847,6 +860,59 @@ This file describes the vault layout for memento-mcp routing.
     console.error("Usage: memento-mcp import <claude-md|cursor|copilot|agents-md|gemini-md|windsurf|cline|roo|auto>");
     console.error("       [path] [--scope global|project] [--type fact] [--dry-run] [--no-confirm]");
     process.exit(1);
+  }
+
+} else if (command === "consolidate" && sub === "--now") {
+  const { ConsolidationScheduler } = await import("../engine/consolidation-scheduler.js");
+  const { createDatabase } = await import("../db/database.js");
+  const { loadConfig, getDefaultConfigPath, getDefaultDbPath } = await import("../lib/config.js");
+
+  const cfg = loadConfig(process.env.MEMENTO_CONFIG_PATH ?? getDefaultConfigPath());
+  const dbPath = process.env.MEMENTO_DB_PATH ?? (cfg.database.path || getDefaultDbPath());
+  const db = createDatabase(dbPath);
+  try {
+    const sched = new ConsolidationScheduler(db, {
+      intervalMs: 60_000,
+      decayFloor: cfg.consolidation.decayFloor,
+    });
+    await sched.runOnce();
+    const last = db.prepare(
+      "SELECT status, clusters_seen, merged_count, pruned_count FROM consolidation_runs ORDER BY id DESC LIMIT 1",
+    ).get() as { status: string; clusters_seen: number; merged_count: number; pruned_count: number } | undefined;
+    if (last) {
+      console.log(
+        `consolidation ${last.status}: clusters_seen=${last.clusters_seen} merged=${last.merged_count} pruned=${last.pruned_count}`,
+      );
+    } else {
+      console.log("consolidation: no run recorded (skipped or no projects).");
+    }
+  } finally {
+    db.close();
+  }
+
+} else if (command === "anchors") {
+  if (sub !== "check") {
+    console.error(`Unknown anchors command: ${sub ?? "(none)"}. Try: memento-mcp anchors check [--project=PATH]`);
+    process.exit(1);
+  }
+  const { runAnchorsCheck } = await import("./anchors.js");
+  const { createDatabase } = await import("../db/database.js");
+  const { getDefaultDbPath } = await import("../lib/config.js");
+
+  const projectArg = argv.find(a => a.startsWith("--project="));
+  const projectPath = projectArg ? projectArg.split("=", 2)[1] : process.cwd();
+  const db = createDatabase(getDefaultDbPath());
+  try {
+    const result = runAnchorsCheck({ db, projectPath });
+    if (result.notGitRepo) {
+      console.error(`Not a git repo: ${projectPath}`);
+      process.exit(1);
+    }
+    console.log(
+      `${result.scanned} anchors checked. ${result.stale} stale, ${result.deleted} anchor-deleted, ${result.fresh} fresh.`,
+    );
+  } finally {
+    db.close();
   }
 
 } else if (command === "--version" || command === "-v") {

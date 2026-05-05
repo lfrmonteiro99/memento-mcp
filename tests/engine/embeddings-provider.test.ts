@@ -15,7 +15,7 @@ describe("createProvider", () => {
     expect(createProvider(cfg)).toBeNull();
   });
 
-  it("returns null and warns when API key env not set", () => {
+  it("falls back to local provider with a warning when API key env not set (P2)", () => {
     const envName = "NEVER_SET_KEY_FOR_TEST";
     delete process.env[envName];
     const cfg = {
@@ -24,7 +24,12 @@ describe("createProvider", () => {
       provider: "openai" as const,
       apiKeyEnv: envName,
     };
-    expect(createProvider(cfg)).toBeNull();
+    const provider = createProvider(cfg);
+    // P2: openai without key now silently falls back to LocalTransformersProvider
+    // (zero-config MiniLM-L6) instead of returning null. This keeps embeddings
+    // working out of the box; the warning surfaces the misconfiguration.
+    expect(provider).not.toBeNull();
+    expect(provider?.constructor.name).toBe("LocalTransformersProvider");
   });
 
   it("returns OpenAIEmbeddingProvider when configured", () => {

@@ -20,6 +20,7 @@ import { randomUUID } from "node:crypto";
 import { createLogger, logLevelFromEnv } from "../lib/logger.js";
 import { redactPrivate } from "../engine/privacy.js";
 import { createLlmProvider } from "../engine/llm/provider.js";
+import { retryWithBackoff } from "../engine/llm/http.js";
 import { buildSessionSummaryPrompt } from "../engine/llm/session-summary-prompt.js";
 import type { SummaryInput } from "../engine/llm/session-summary-prompt.js";
 import { estimateTokensV2 } from "../engine/token-estimator.js";
@@ -133,10 +134,15 @@ async function main(): Promise<void> {
           };
 
           const { system, user } = buildSessionSummaryPrompt(summaryInput, llmCfg.maxInputTokens);
-          const text = await provider.complete(system, user, {
-            maxOutputTokens: llmCfg.maxOutputTokens,
-            timeoutMs: llmCfg.requestTimeoutMs,
-          });
+          // P0 Task 5: ride out transient LLM timeouts (3× exp-backoff) before
+          // surrendering to the deterministic fallback below.
+          const text = await retryWithBackoff(
+            () => provider.complete(system, user, {
+              maxOutputTokens: llmCfg.maxOutputTokens,
+              timeoutMs: llmCfg.requestTimeoutMs,
+            }),
+            { attempts: 3, baseDelayMs: 200 },
+          );
 
           // Apply redactPrivate to LLM response in case the model echoes private content
           const body = redactPrivate(text);

@@ -32,6 +32,7 @@ import { AnalyticsTracker, installFlushOnExit } from "./analytics/tracker.js";
 import { cleanupExpiredAnalytics } from "./analytics/retention.js";
 import { runCompressionCycle } from "./engine/compressor.js";
 import { toCompressionConfig } from "./lib/compression-config.js";
+import { ConsolidationScheduler } from "./engine/consolidation-scheduler.js";
 import { configureFileMemoryCache } from "./lib/file-memory.js";
 import { promoteImportanceFromUtility } from "./engine/importance-promoter.js";
 import { collectPoliciesPerProject } from "./lib/policy.js";
@@ -136,9 +137,12 @@ function runMaintenance(): void {
         .all() as Array<{ id: string }>;
       const compCfg = toCompressionConfig(config);
       for (const { id } of projects) {
-        const results = runCompressionCycle(db, id, compCfg);
-        if (results.length > 0) {
-          log.info(`Compressed ${results.length} cluster(s) in project ${id}`);
+        const summary = runCompressionCycle(db, id, compCfg);
+        if (summary.compressed.length > 0 || summary.pruned.clusterCount > 0) {
+          log.info(
+            `Compressed ${summary.compressed.length} cluster(s) ` +
+            `(pruned ${summary.pruned.clusterCount} low-quality cluster(s) / ${summary.pruned.memoryCount} memories) in project ${id}`,
+          );
         }
       }
     } catch (e) {
@@ -158,16 +162,35 @@ if (config.pruning.enabled) {
   pruneTimer.unref?.();
 }
 
-// Graceful shutdown
-function shutdown(): void {
+// P3 Task 5: opt-in consolidation scheduler. OFF by default; enable via
+// [consolidation] enabled = true in memento-mcp.toml. When on, decay-gated
+// clusters get rolled up into 'compression' memories with derives_from edges
+// to their sources, and the sources are soft-deleted.
+let consolidationScheduler: ConsolidationScheduler | null = null;
+if (config.consolidation.enabled) {
+  consolidationScheduler = new ConsolidationScheduler(db, {
+    intervalMs: config.consolidation.intervalMs,
+    decayFloor: config.consolidation.decayFloor,
+  });
+  consolidationScheduler.start();
+}
+
+// Graceful shutdown — async so we can drain an in-flight consolidation tick
+// before closing the DB underneath it (otherwise a tick that's mid-`git blame`
+// or mid-clustering can throw "Database is closed" and leave a dangling
+// 'running' row that blocks future leaders for 5 minutes).
+async function shutdown(): Promise<void> {
   if (pruneTimer) clearInterval(pruneTimer);
+  if (consolidationScheduler) {
+    try { await consolidationScheduler.stop(); } catch { /* logged inside */ }
+  }
   try { analyticsTracker.flush(); } catch { /* ignore */ }
   disposeFlush();
   try { db.close(); } catch { /* ignore */ }
   process.exit(0);
 }
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGTERM", () => { void shutdown(); });
+process.on("SIGINT", () => { void shutdown(); });
 
 const server = new McpServer({ name: "memento-mcp", version: "2.1.6" });
 
@@ -233,6 +256,7 @@ server.registerTool(
       "Ranked full-text + decay-weighted search across SQLite, file-memory sources, and (when configured) the Obsidian vault. Read-only.",
       "Use the three-layer progressive-disclosure pattern: `detail=\"index\"` (~30 tok/result, start here), `\"summary\"` (~80 tok), `\"full\"` (~150-300 tok, use sparingly).",
       "Follow-ups: `memory_timeline(id)` for chronological neighbours of one hit, `memory_get(id)` for one full body, `memory_graph(id)` to explore typed edges.",
+      "include_edges=true surfaces 1-hop typed neighbours of each hit (useful for tracing causal chains and consolidation provenance).",
     ].join(" "),
     inputSchema: {
       query: z.string().min(1).describe("Free-text query. Tokenised by FTS5; phrases match individual terms. Examples: `\"oauth refresh\"`, `\"why we picked postgres\"`."),
@@ -241,6 +265,10 @@ server.registerTool(
       limit: z.number().int().min(1).max(50).default(10).describe("Maximum number of results to return (1-50). Default 10."),
       detail: z.enum(["index", "summary", "full"]).default("index").describe("Disclosure level — `index` (cheapest), `summary`, or `full`. Always start at `index` and escalate only if needed."),
       include_file_memories: z.boolean().default(true).describe("If true (default), also search markdown memory files registered as sources. Set false to limit to SQLite + vault."),
+      include_edges: z.boolean().default(false).describe("If true, also surface 1-hop typed edge neighbours of each hit. Off by default to keep cost low."),
+      edge_types: z.array(z.enum(["relates_to", "supersedes", "caused_by", "mitigated_by", "references", "implements", "derives_from"])).optional().describe("Optional filter on edge types when include_edges=true."),
+      edge_direction: z.enum(["outgoing", "incoming", "both"]).default("both").describe("Edge traversal direction relative to each hit. Default both."),
+      include_deleted_neighbours: z.boolean().default(false).describe("If true, include soft-deleted neighbours (e.g. consolidation sources reachable via derives_from). They render with an [archived] marker."),
     },
     annotations: {
       title: "Search memories",
@@ -269,7 +297,7 @@ server.registerTool(
     },
   },
   async (params) => {
-    const { text, structured } = await searchMemories(memRepo, config, params, db, analyticsTracker);
+    const { text, structured } = await searchMemories(memRepo, config, params, db, analyticsTracker, embRepo);
     return { content: [{ type: "text" as const, text }], structuredContent: structured };
   }
 );

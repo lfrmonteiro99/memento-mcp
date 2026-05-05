@@ -8,7 +8,11 @@ export type EdgeType =
   | "caused_by"
   | "mitigated_by"
   | "references"
-  | "implements";
+  | "implements"
+  // P3: emitted by applyCompression from a 'compression' memory to each of
+  // its source memories (which are then soft-deleted). Used by memory_search
+  // with include_edges + include_deleted_neighbours to surface provenance.
+  | "derives_from";
 
 export const ALLOWED_EDGE_TYPES: EdgeType[] = [
   "relates_to",
@@ -17,6 +21,7 @@ export const ALLOWED_EDGE_TYPES: EdgeType[] = [
   "mitigated_by",
   "references",
   "implements",
+  "derives_from",
 ];
 
 export interface EdgeRow {

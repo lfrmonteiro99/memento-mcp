@@ -93,9 +93,9 @@ describe("Phase 4 integration: full compression pipeline", () => {
       }),
     ).toBe(true);
 
-    const results = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
-    expect(results.length).toBeGreaterThanOrEqual(1);
-    expect(results[0].compression_ratio).toBeLessThanOrEqual(1.0);
+    const { compressed } = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
+    expect(compressed.length).toBeGreaterThanOrEqual(1);
+    expect(compressed[0].compression_ratio).toBeLessThanOrEqual(1.0);
 
     const compressedRow = db
       .prepare("SELECT source FROM memories WHERE deleted_at IS NULL AND source = 'compression'")
@@ -118,9 +118,9 @@ describe("Phase 4 integration: full compression pipeline", () => {
       });
     }
 
-    const results = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
+    const { compressed } = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
     const logRows = db.prepare("SELECT * FROM compression_log").all() as any[];
-    expect(logRows.length).toBe(results.length);
+    expect(logRows.length).toBe(compressed.length);
     for (const log of logRows) {
       expect(typeof log.compressed_memory_id).toBe("string");
       const sourceIds = JSON.parse(log.source_memory_ids);

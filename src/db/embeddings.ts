@@ -1,6 +1,6 @@
 // src/db/embeddings.ts
 import type Database from "better-sqlite3";
-import { floatToBlob, blobToFloat } from "../engine/embeddings/cosine.js";
+import { floatToBlob, blobToFloat, cosineSimilarity } from "../engine/embeddings/cosine.js";
 
 export class EmbeddingsRepo {
   constructor(private db: Database.Database) {}
@@ -59,35 +59,66 @@ export class EmbeddingsRepo {
     }));
   }
 
-  countMissing(model: string): number {
-    const row = this.db.prepare(`
-      SELECT COUNT(*) AS cnt
-      FROM memories m
-      LEFT JOIN embeddings e ON e.memory_id = m.id AND e.model = ?
-      WHERE m.deleted_at IS NULL AND e.memory_id IS NULL
-    `).get(model) as { cnt: number };
-    return row.cnt;
+  topKByCosine(
+    queryVec: Float32Array,
+    projectId: string | null,
+    model: string,
+    k: number,
+  ): Array<{ id: string; score: number }> {
+    const candidates = this.getByProject(projectId, model);
+    const scored = candidates.map((c) => ({
+      id: c.memoryId,
+      score: cosineSimilarity(queryVec, c.vector),
+    }));
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, k);
+  }
+
+  countMissing(model: string, projectId?: string): number {
+    const sql = projectId
+      ? `SELECT COUNT(*) AS cnt
+         FROM memories m
+         LEFT JOIN embeddings e ON e.memory_id = m.id AND e.model = ?
+         WHERE m.deleted_at IS NULL AND e.memory_id IS NULL AND m.project_id = ?`
+      : `SELECT COUNT(*) AS cnt
+         FROM memories m
+         LEFT JOIN embeddings e ON e.memory_id = m.id AND e.model = ?
+         WHERE m.deleted_at IS NULL AND e.memory_id IS NULL`;
+    const row = projectId
+      ? this.db.prepare(sql).get(model, projectId)
+      : this.db.prepare(sql).get(model);
+    return (row as { cnt: number }).cnt;
   }
 
   *iterateMissing(
     model: string,
     batchSize: number,
+    projectId?: string,
   ): IterableIterator<{ id: string; title: string; body: string }> {
     let offset = 0;
+    const sql = projectId
+      ? `SELECT m.id, m.title, COALESCE(m.body, '') AS body
+         FROM memories m
+         LEFT JOIN embeddings e ON e.memory_id = m.id AND e.model = ?
+         WHERE m.deleted_at IS NULL AND e.memory_id IS NULL AND m.project_id = ?
+         ORDER BY m.created_at ASC
+         LIMIT ? OFFSET ?`
+      : `SELECT m.id, m.title, COALESCE(m.body, '') AS body
+         FROM memories m
+         LEFT JOIN embeddings e ON e.memory_id = m.id AND e.model = ?
+         WHERE m.deleted_at IS NULL AND e.memory_id IS NULL
+         ORDER BY m.created_at ASC
+         LIMIT ? OFFSET ?`;
     while (true) {
-      const batch = this.db.prepare(`
-        SELECT m.id, m.title, COALESCE(m.body, '') AS body
-        FROM memories m
-        LEFT JOIN embeddings e ON e.memory_id = m.id AND e.model = ?
-        WHERE m.deleted_at IS NULL AND e.memory_id IS NULL
-        ORDER BY m.created_at ASC
-        LIMIT ? OFFSET ?
-      `).all(model, batchSize, offset) as Array<{ id: string; title: string; body: string }>;
+      const batch = projectId
+        ? this.db.prepare(sql).all(model, projectId, batchSize, offset)
+        : this.db.prepare(sql).all(model, batchSize, offset);
+      const rows = batch as Array<{ id: string; title: string; body: string }>;
 
-      if (batch.length === 0) break;
-      yield* batch;
-      offset += batch.length;
-      if (batch.length < batchSize) break;
+      if (rows.length === 0) break;
+      yield* rows;
+      offset += rows.length;
+      if (rows.length < batchSize) break;
     }
   }
 }

@@ -23,9 +23,9 @@ describe("migration v8: memory_edges", () => {
     rmSync(dbPath, { force: true });
   });
 
-  it("PRAGMA user_version is 8 after migrations", () => {
+  it("PRAGMA user_version is at least 8 after migrations (memory_edges landed)", () => {
     const version = db.pragma("user_version", { simple: true }) as number;
-    expect(version).toBe(8);
+    expect(version).toBeGreaterThanOrEqual(8);
   });
 
   it("memory_edges table exists after migration", () => {

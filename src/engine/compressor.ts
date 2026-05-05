@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { jaccardSimilarity, trigramSimilarity } from "./similarity.js";
 import { estimateTokensV2 } from "./token-estimator.js";
+import { computeExponentialDecay, daysSince } from "../lib/decay.js";
 
 export interface MemoryRecord {
   id: string;
@@ -19,6 +20,7 @@ export interface MemoryRecord {
   supersedes_memory_id: string | null;
   source: string;
   adaptive_score: number;
+  quality_score?: number; // P0 Task 4/6: heuristic quality on auto-capture rows
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -29,6 +31,15 @@ export interface CompressionConfig {
   min_cluster_size: number;
   max_body_ratio: number;
   temporal_window_hours: number;
+  /** P0 Task 6: clusters whose median quality_score is < this floor are
+   * soft-deleted instead of merged. Only auto-capture rows carry quality
+   * scores; user rows default to 0.5 and are unaffected by typical floors. */
+  qualityFloor?: number;
+  /** P3 Task 2: only consider memories whose exponential decay (halflife=14d)
+   * is at or below this floor. Default is undefined → no filter (legacy
+   * on-demand `memory_compress` runs unaffected). The scheduler sets it to
+   * 0.6 (~10+ days old) so still-being-iterated rows aren't consolidated. */
+  decay_floor?: number;
 }
 
 export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
@@ -36,6 +47,7 @@ export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
   min_cluster_size: 2,
   max_body_ratio: 0.6,
   temporal_window_hours: 48,
+  qualityFloor: 0.25,
 };
 
 export interface CompressionTriggerConfig {
@@ -106,8 +118,16 @@ export function clusterMemories(
   memories: MemoryRecord[],
   config: CompressionConfig,
 ): CompressionCluster[] {
+  const decayFloor = config.decay_floor;
   const input = memories
     .filter(m => m.source !== "compression")
+    // P3 Task 2: when decay_floor is set, exclude rows whose exponential decay
+    // (halflife=14d) is still above the floor — those are recent enough that
+    // the user is likely still iterating and consolidation would be premature.
+    // Gate on last_accessed_at when present (matches applyDecayV2 semantics);
+    // fall back to created_at for rows never re-touched since insertion.
+    .filter(m => decayFloor === undefined
+      || computeExponentialDecay(daysSince(m.last_accessed_at ?? m.created_at), 14) <= decayFloor)
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, MAX_CLUSTERING_MEMORIES);
 
@@ -469,7 +489,16 @@ export function applyCompression(db: Database.Database, result: CompressionResul
     const softDelete = db.prepare(
       "UPDATE memories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
     );
+    // P3 Task 3: emit derives_from edge from compressed → source. Direct INSERT
+    // OR IGNORE inside the transaction; the freshly-minted compressed `id`
+    // cannot equal any source id so the self-loop guard EdgesRepo.link would
+    // add is moot here.
+    const edgeInsert = db.prepare(
+      `INSERT OR IGNORE INTO memory_edges(from_id, to_id, edge_type, weight, created_at)
+       VALUES (?, ?, 'derives_from', 1.0, ?)`,
+    );
     for (const sourceId of result.source_memory_ids) {
+      edgeInsert.run(id, sourceId, now);
       softDelete.run(now, sourceId);
     }
   });
@@ -483,12 +512,30 @@ export function applyCompression(db: Database.Database, result: CompressionResul
  * Better-sqlite3 transactions are synchronous, so nesting is safe; the
  * outermost transaction is the actual commit boundary.
  */
+/** P0 Task 6: median quality_score of a cluster's memories.
+ * Rows without quality_score (older user rows) default to 0.5 so they don't
+ * trip the floor. */
+function clusterMedianQuality(cluster: CompressionCluster): number {
+  const scores = cluster.memories
+    .map(m => (typeof m.quality_score === "number" ? m.quality_score : 0.5))
+    .sort((a, b) => a - b);
+  if (scores.length === 0) return 0.5;
+  return scores[Math.floor(scores.length / 2)];
+}
+
+export interface CompressionCycleSummary {
+  compressed: CompressionResult[];
+  pruned: { clusterCount: number; memoryCount: number };
+}
+
 export function runCompressionCycle(
   db: Database.Database,
   projectId: string,
   config: CompressionConfig,
-): CompressionResult[] {
-  const results: CompressionResult[] = [];
+): CompressionCycleSummary {
+  const compressed: CompressionResult[] = [];
+  let prunedClusters = 0;
+  let prunedMemories = 0;
 
   const tx = db.transaction(() => {
     const rows = db
@@ -502,13 +549,25 @@ export function runCompressionCycle(
       .all(projectId) as MemoryRecord[];
 
     const clusters = clusterMemories(rows, config);
+    const floor = config.qualityFloor ?? 0;
+    const softDelete = db.prepare(
+      "UPDATE memories SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL",
+    );
     for (const cluster of clusters) {
+      if (floor > 0 && clusterMedianQuality(cluster) < floor) {
+        prunedClusters++;
+        for (const m of cluster.memories) {
+          softDelete.run(m.id);
+          prunedMemories++;
+        }
+        continue;
+      }
       const merged = mergeCluster(cluster);
       applyCompression(db, merged);
-      results.push(merged);
+      compressed.push(merged);
     }
   });
 
   tx();
-  return results;
+  return { compressed, pruned: { clusterCount: prunedClusters, memoryCount: prunedMemories } };
 }

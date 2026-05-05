@@ -371,6 +371,71 @@ INSERT OR IGNORE INTO memory_edges (from_id, to_id, edge_type, weight, created_a
   WHERE supersedes_memory_id IS NOT NULL;
 `,
   },
+  {
+    // P0 Task 2: heuristic quality on auto-capture rows. Compressor (Task 6)
+    // soft-deletes clusters whose median falls below qualityFloor.
+    version: 9,
+    name: "quality_score",
+    sql: "",
+    afterSql: (db: Database.Database) => {
+      const cols = (db.pragma("table_info(memories)") as Array<{ name: string }>).map(c => c.name);
+      if (!cols.includes("quality_score")) {
+        db.exec("ALTER TABLE memories ADD COLUMN quality_score REAL NOT NULL DEFAULT 0.5");
+      }
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memories_quality
+        ON memories(project_id, quality_score) WHERE deleted_at IS NULL AND source = 'auto-capture'
+      `);
+    },
+  },
+  {
+    // P4 Task 1: pin memories to file paths + optional line range + commit_sha
+    // for staleness checks on Edit/Write or via the `anchors check` CLI.
+    version: 10,
+    name: "memory_anchors",
+    sql: `
+CREATE TABLE IF NOT EXISTS memory_anchors (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  memory_id    TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  file_path    TEXT NOT NULL,
+  line_start   INTEGER,
+  line_end     INTEGER,
+  commit_sha   TEXT,
+  anchored_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  status       TEXT NOT NULL DEFAULT 'fresh' CHECK(status IN ('fresh','stale','anchor-deleted')),
+  stale_since  TEXT,
+  stale_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_anchors_memory ON memory_anchors(memory_id);
+CREATE INDEX IF NOT EXISTS idx_memory_anchors_file ON memory_anchors(file_path);
+CREATE INDEX IF NOT EXISTS idx_memory_anchors_status ON memory_anchors(status) WHERE status != 'fresh';
+`,
+  },
+  {
+    // P3 Task 1: audit table for the consolidation scheduler. Each tick inserts
+    // a 'running' row, then updates to 'finished'/'failed' on completion. Leader
+    // election uses a 5-minute staleness window over the most recent 'running'.
+    version: 11,
+    name: "consolidation_runs",
+    sql: `
+CREATE TABLE IF NOT EXISTS consolidation_runs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id    TEXT REFERENCES projects(id) ON DELETE CASCADE,
+  started_at    TEXT NOT NULL,
+  finished_at   TEXT,
+  clusters_seen INTEGER NOT NULL DEFAULT 0,
+  merged_count  INTEGER NOT NULL DEFAULT 0,
+  pruned_count  INTEGER NOT NULL DEFAULT 0,
+  status        TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','finished','failed')),
+  hostname      TEXT,
+  pid           INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_consolidation_runs_project ON consolidation_runs(project_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_consolidation_runs_status ON consolidation_runs(status, started_at);
+`,
+  },
 ];
 
 const FTS_TRIGGERS_SQL = `

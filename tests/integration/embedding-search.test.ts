@@ -64,13 +64,19 @@ describe("hybrid embedding search integration", () => {
     expect(cosineSimilarity(authBug, jwtFail)).toBeGreaterThan(0.9);
   });
 
-  it("enabled=false (default) produces no embedding activity", async () => {
+  it("enabled=false produces no embedding activity", async () => {
     // Store memory and embedding
     const id = memRepo.store({ title: "JWT validation failure", body: "Token signature mismatch", memoryType: "fact", scope: "global" });
     embRepo.upsert(id, "mock-model", new Float32Array([0.95, 0.1, 0, 0]));
 
-    // Default config has embeddings disabled
-    const config = { ...DEFAULT_CONFIG };
+    // Explicitly disable embeddings to test the FTS-only path.
+    const config = {
+      ...DEFAULT_CONFIG,
+      search: {
+        ...DEFAULT_CONFIG.search,
+        embeddings: { ...DEFAULT_CONFIG.search.embeddings, enabled: false },
+      },
+    };
     expect(config.search.embeddings.enabled).toBe(false);
 
     // Search without embRepo arg — embeddings disabled path

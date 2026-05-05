@@ -183,8 +183,8 @@ describe("runCompressionCycle (R5 atomic pipeline)", () => {
       );
     }
 
-    const results = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
-    expect(results.length).toBeGreaterThanOrEqual(1);
+    const { compressed } = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
+    expect(compressed.length).toBeGreaterThanOrEqual(1);
 
     const active = db
       .prepare(
@@ -195,7 +195,83 @@ describe("runCompressionCycle (R5 atomic pipeline)", () => {
     expect(active.c).toBeLessThan(ids.length);
 
     const logCount = db.prepare("SELECT COUNT(*) as c FROM compression_log").get() as any;
-    expect(logCount.c).toBe(results.length);
+    expect(logCount.c).toBe(compressed.length);
+  });
+
+  it("P3 Task 3: applyCompression emits derives_from edges to each source memory", () => {
+    const projectPath = "/edges-proj";
+    const projectId = memRepo.ensureProject(projectPath);
+
+    const sourceIds: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      sourceIds.push(memRepo.store({
+        title: `Edit: payments.ts step ${i}`,
+        body: `Refactored payments.ts handler ${i} for retry semantics`,
+        memoryType: "fact",
+        scope: "project",
+        projectPath,
+        tags: ["edit", "payments"],
+      }));
+    }
+
+    const { compressed } = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
+    expect(compressed.length).toBeGreaterThanOrEqual(1);
+
+    // Find the new compression memory.
+    const newMem = db.prepare(
+      "SELECT id FROM memories WHERE source = 'compression' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1",
+    ).get() as { id: string };
+    expect(newMem).toBeDefined();
+
+    const edges = db.prepare(
+      "SELECT to_id FROM memory_edges WHERE from_id = ? AND edge_type = 'derives_from'",
+    ).all(newMem.id) as Array<{ to_id: string }>;
+    const edgeTargets = edges.map(e => e.to_id).sort();
+    const sourcesInResult = compressed[0].source_memory_ids.sort();
+    expect(edgeTargets).toEqual(sourcesInResult);
+  });
+
+  it("P0 Task 6: prunes auto-capture clusters whose median quality_score is below qualityFloor", () => {
+    const projectPath = "/lowq-proj";
+    const projectId = memRepo.ensureProject(projectPath);
+
+    // 5 near-duplicate auto-capture rows with low quality_score (0.1) — should cluster and prune.
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      ids.push(
+        memRepo.store({
+          title: `Auto: shell ran ls - ${i}`,
+          body: `Ran ls in /tmp/foo on iteration ${i}; nothing notable`,
+          memoryType: "fact",
+          scope: "project",
+          projectPath,
+          tags: ["auto-capture"],
+          source: "auto-capture",
+          qualityScore: 0.1,
+        }),
+      );
+    }
+
+    const cfg = { ...DEFAULT_COMPRESSION_CONFIG, qualityFloor: 0.25 };
+    const { compressed, pruned } = runCompressionCycle(db, projectId, cfg);
+
+    // Low-quality cluster pruned, not merged: no compression result references its ids.
+    const compressedSourceIds = new Set(compressed.flatMap(r => r.source_memory_ids));
+    for (const id of ids) {
+      expect(compressedSourceIds.has(id)).toBe(false);
+    }
+
+    // Pruned counts surfaced in the cycle summary.
+    expect(pruned.clusterCount).toBeGreaterThanOrEqual(1);
+    expect(pruned.memoryCount).toBe(5);
+
+    // All 5 low-quality memories soft-deleted.
+    const deleted = db
+      .prepare(
+        "SELECT COUNT(*) as c FROM memories WHERE project_id = ? AND deleted_at IS NOT NULL",
+      )
+      .get(projectId) as { c: number };
+    expect(deleted.c).toBe(5);
   });
 
   it("skips memories already marked source='compression' (idempotent)", () => {
@@ -215,7 +291,7 @@ describe("runCompressionCycle (R5 atomic pipeline)", () => {
 
     const first = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
     const second = runCompressionCycle(db, projectId, DEFAULT_COMPRESSION_CONFIG);
-    expect(first.length).toBeGreaterThanOrEqual(1);
-    expect(second.length).toBe(0);
+    expect(first.compressed.length).toBeGreaterThanOrEqual(1);
+    expect(second.compressed.length).toBe(0);
   });
 });

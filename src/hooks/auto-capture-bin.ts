@@ -17,6 +17,7 @@ import { loadConfig, getDefaultConfigPath, getDefaultDbPath } from "../lib/confi
 import { processAutoCapture, AutoCaptureConfig } from "./auto-capture.js";
 import { stringifyToolResponse, scrubSecrets } from "../engine/text-utils.js";
 import { processUtilitySignals } from "./utility-signal.js";
+import { processAnchorStaleness } from "./anchor-staleness.js";
 
 async function main(): Promise<void> {
   // Read the PostToolUse event from stdin
@@ -83,7 +84,7 @@ async function main(): Promise<void> {
       dedup_similarity_threshold: acRaw?.dedupSimilarityThreshold ?? 0.7,
       max_per_session: acRaw?.maxPerSession ?? 20,
       default_importance: acRaw?.defaultImportance ?? 0.3,
-      tools: acRaw?.tools ?? ["Bash", "Read", "Grep", "Edit"],
+      tools: acRaw?.tools ?? ["Bash", "Read", "Grep", "Edit", "Write", "WebSearch", "WebFetch", "Glob"],
       session_timeout_seconds: acRaw?.sessionTimeoutSeconds ?? 3600,
     };
 
@@ -108,8 +109,24 @@ async function main(): Promise<void> {
       tool_response_text: toolResponseText,
       utility_window_minutes: (rawConfig as any).adaptive?.utility_window_minutes ?? 10,
     });
+
+    // R2: flush analytics BEFORE the optional anchor-staleness pass below.
+    // Pipeline 3 spawns synchronous git invocations that can take 10s of ms
+    // each; flushing here prevents analytics loss if SIGKILL hits during git
+    // and keeps the hot-path commit cheap when anchorStaleness is off.
+    try { tracker.flush(); } catch { /* ignore */ }
+
+    // Pipeline 3 (P4 Task 8): opt-in anchor-staleness check.
+    // OFF by default — `processAnchorStaleness` is a no-op when enabled=false.
+    const filePath = typeof toolInput.file_path === "string" ? toolInput.file_path : undefined;
+    processAnchorStaleness(db, {
+      enabled: rawConfig.anchorStaleness?.enabled === true,
+      cwd,
+      toolName,
+      filePath,
+    });
   } finally {
-    // R2: flush analytics before exit so no events are lost to SIGKILL.
+    // Idempotent: tracker.flush() short-circuits when there's nothing buffered.
     try { tracker.flush(); } catch { /* ignore */ }
     try { db.close(); } catch { /* ignore */ }
   }

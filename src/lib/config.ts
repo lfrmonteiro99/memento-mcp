@@ -55,7 +55,7 @@ export interface Config {
     ftsPrefixMatching: boolean;
     embeddings: {
       enabled: boolean;
-      provider: "openai" | "ollama";
+      provider: "openai" | "ollama" | "local";
       model: string;
       apiKeyEnv: string;
       dim: number;
@@ -108,6 +108,7 @@ export interface Config {
     minClusterSize: number;
     maxBodyRatio: number;
     temporalWindowHours: number;
+    qualityFloor: number;
   };
   adaptive: {
     enabled: boolean;
@@ -132,6 +133,20 @@ export interface Config {
   fileMemory: {
     cacheTtlSeconds: number;
     enabled: boolean;
+  };
+  /** P4 Task 8: opt-in PostToolUse anchor-staleness check on Edit/Write. */
+  anchorStaleness: {
+    enabled: boolean;
+    debounceMs: number;
+  };
+  /** P3: scheduled consolidation pass. OFF by default. */
+  consolidation: {
+    enabled: boolean;
+    /** Tick period in ms. Default 6h. */
+    intervalMs: number;
+    /** Only memories whose exponential decay (halflife=14d) is at or below
+     * this floor are eligible for consolidation. 0.6 ≈ ≥10 days old. */
+    decayFloor: number;
   };
 }
 
@@ -168,11 +183,11 @@ export const DEFAULT_CONFIG: Config = {
     preservePhrases: true,
     ftsPrefixMatching: true,
     embeddings: {
-      enabled: false,
-      provider: "openai",
-      model: "text-embedding-3-small",
+      enabled: true,
+      provider: "local",
+      model: "Xenova/all-MiniLM-L6-v2",
       apiKeyEnv: "OPENAI_API_KEY",
-      dim: 1536,
+      dim: 384,
       topK: 20,
       similarityThreshold: 0.5,
       batchSize: 32,
@@ -226,7 +241,7 @@ export const DEFAULT_CONFIG: Config = {
     dedupSimilarityThreshold: 0.7,
     maxPerSession: 20,
     defaultImportance: 0.3,
-    tools: ["Bash", "Read", "Grep", "Edit"],
+    tools: ["Bash", "Read", "Grep", "Edit", "Write", "WebSearch", "WebFetch", "Glob"],
     sessionTimeoutSeconds: 3600,
   },
   compression: {
@@ -238,6 +253,7 @@ export const DEFAULT_CONFIG: Config = {
     minClusterSize: 2,
     maxBodyRatio: 0.6,
     temporalWindowHours: 48,
+    qualityFloor: 0.25,
   },
   adaptive: {
     enabled: true,
@@ -262,6 +278,15 @@ export const DEFAULT_CONFIG: Config = {
   fileMemory: {
     cacheTtlSeconds: 60,
     enabled: true,
+  },
+  anchorStaleness: {
+    enabled: false,
+    debounceMs: 5000,
+  },
+  consolidation: {
+    enabled: false,
+    intervalMs: 6 * 60 * 60 * 1000, // 6 hours
+    decayFloor: 0.6,
   },
 };
 
@@ -303,7 +328,7 @@ export function loadConfig(configPath: string): Config {
     if (toml.search.embeddings && typeof toml.search.embeddings === "object") {
       const emb = toml.search.embeddings;
       if (emb.enabled != null) config.search.embeddings.enabled = Boolean(emb.enabled);
-      if (emb.provider) config.search.embeddings.provider = String(emb.provider) as "openai" | "ollama";
+      if (emb.provider) config.search.embeddings.provider = String(emb.provider) as "openai" | "ollama" | "local";
       if (emb.model) config.search.embeddings.model = String(emb.model);
       if (emb.api_key_env) config.search.embeddings.apiKeyEnv = String(emb.api_key_env);
       if (emb.dim != null) config.search.embeddings.dim = Number(emb.dim);
@@ -390,6 +415,7 @@ export function loadConfig(configPath: string): Config {
     if (c.min_cluster_size != null) config.compression.minClusterSize = Number(c.min_cluster_size);
     if (c.max_body_ratio != null) config.compression.maxBodyRatio = Number(c.max_body_ratio);
     if (c.temporal_window_hours != null) config.compression.temporalWindowHours = Number(c.temporal_window_hours);
+    if (c.quality_floor != null) config.compression.qualityFloor = Number(c.quality_floor);
   }
   if (toml.adaptive) {
     const ad = toml.adaptive;
@@ -417,6 +443,17 @@ export function loadConfig(configPath: string): Config {
   if (toml.file_memory) {
     if (toml.file_memory.cache_ttl_seconds != null) config.fileMemory.cacheTtlSeconds = Number(toml.file_memory.cache_ttl_seconds);
     if (toml.file_memory.enabled != null) config.fileMemory.enabled = Boolean(toml.file_memory.enabled);
+  }
+  if (toml.anchor_staleness) {
+    const a = toml.anchor_staleness;
+    if (a.enabled != null) config.anchorStaleness.enabled = Boolean(a.enabled);
+    if (a.debounce_ms != null) config.anchorStaleness.debounceMs = Number(a.debounce_ms);
+  }
+  if (toml.consolidation) {
+    const c = toml.consolidation;
+    if (c.enabled != null) config.consolidation.enabled = Boolean(c.enabled);
+    if (c.interval_ms != null) config.consolidation.intervalMs = Number(c.interval_ms);
+    if (c.decay_floor != null) config.consolidation.decayFloor = Number(c.decay_floor);
   }
   if (toml.sync) {
     const s = toml.sync;

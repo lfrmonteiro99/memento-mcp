@@ -124,3 +124,104 @@ describe("EmbeddingsRepo", () => {
     expect(ids).toContain(id1);
   });
 });
+
+describe("EmbeddingsRepo project-scoped backfill queries", () => {
+  let db: ReturnType<typeof createDatabase>;
+  let memRepo: MemoriesRepo;
+  let embRepo: EmbeddingsRepo;
+  let projectA: string;
+  let projectB: string;
+  const dbPath = join(tmpdir(), `memento-proj-scoped-test-${process.pid}-${randomUUID()}.sqlite`);
+
+  beforeEach(() => {
+    db = createDatabase(dbPath);
+    memRepo = new MemoriesRepo(db);
+    embRepo = new EmbeddingsRepo(db);
+    projectA = memRepo.ensureProject("/tmp/projA");
+    projectB = memRepo.ensureProject("/tmp/projB");
+
+    memRepo.store({ title: "A1", body: "a1", memoryType: "fact", scope: "project", projectId: projectA });
+    memRepo.store({ title: "A2", body: "a2", memoryType: "fact", scope: "project", projectId: projectA });
+    memRepo.store({ title: "B1", body: "b1", memoryType: "fact", scope: "project", projectId: projectB });
+  });
+  afterEach(() => { db.close(); rmSync(dbPath, { force: true }); });
+
+  it("countMissing without projectId counts all", () => {
+    expect(embRepo.countMissing("test-model")).toBe(3);
+  });
+
+  it("countMissing with projectId scopes to that project", () => {
+    expect(embRepo.countMissing("test-model", projectA)).toBe(2);
+    expect(embRepo.countMissing("test-model", projectB)).toBe(1);
+  });
+
+  it("iterateMissing with projectId scopes to that project", () => {
+    const ids = Array.from(embRepo.iterateMissing("test-model", 10, projectA)).map(m => m.id);
+    expect(ids.length).toBe(2);
+    expect(ids.sort()).toEqual(ids.sort());
+  });
+
+  it("countMissing with projectId still excludes already-embedded", () => {
+    const id = memRepo.store({ title: "A3", body: "a3", memoryType: "fact", scope: "project", projectId: projectA });
+    embRepo.upsert(id, "test-model", new Float32Array([1, 0, 0, 0]));
+    expect(embRepo.countMissing("test-model", projectA)).toBe(2); // A1 and A2, not A3
+  });
+});
+
+describe("EmbeddingsRepo.topKByCosine", () => {
+  let db: ReturnType<typeof createDatabase>;
+  let memRepo: MemoriesRepo;
+  let embRepo: EmbeddingsRepo;
+  let projectId: string;
+  const dbPath = join(tmpdir(), `memento-topk-test-${process.pid}-${randomUUID()}.sqlite`);
+
+  beforeEach(() => {
+    db = createDatabase(dbPath + "-" + randomUUID());
+    memRepo = new MemoriesRepo(db);
+    embRepo = new EmbeddingsRepo(db);
+    projectId = memRepo.ensureProject("/tmp/p");
+  });
+  afterEach(() => { db.close(); });
+
+  it("returns top-k candidates ranked by cosine similarity", () => {
+    const id1 = memRepo.store({ title: "M1", body: "", memoryType: "fact", scope: "project", projectId });
+    const id2 = memRepo.store({ title: "M2", body: "", memoryType: "fact", scope: "project", projectId });
+    const id3 = memRepo.store({ title: "M3", body: "", memoryType: "fact", scope: "project", projectId });
+
+    embRepo.upsert(id1, "test-model", new Float32Array([1, 0, 0, 0]));     // cos with query [1,0,0,0] = 1.0
+    embRepo.upsert(id2, "test-model", new Float32Array([0.7, 0.7, 0, 0])); // cos ≈ 0.707
+    embRepo.upsert(id3, "test-model", new Float32Array([0, 1, 0, 0]));     // cos = 0.0
+
+    const query = new Float32Array([1, 0, 0, 0]);
+    const top = embRepo.topKByCosine(query, projectId, "test-model", 2);
+    expect(top).toHaveLength(2);
+    expect(top[0].id).toBe(id1);
+    expect(top[1].id).toBe(id2);
+    expect(top[0].score).toBeCloseTo(1.0);
+    expect(top[1].score).toBeCloseTo(0.707, 2);
+  });
+
+  it("respects model filter", () => {
+    const id1 = memRepo.store({ title: "M1", body: "", memoryType: "fact", scope: "project", projectId });
+    embRepo.upsert(id1, "model-A", new Float32Array([1, 0, 0, 0]));
+    const id2 = memRepo.store({ title: "M2", body: "", memoryType: "fact", scope: "project", projectId });
+    embRepo.upsert(id2, "model-B", new Float32Array([1, 0, 0, 0]));
+
+    const top = embRepo.topKByCosine(new Float32Array([1, 0, 0, 0]), projectId, "model-A", 10);
+    expect(top.map(r => r.id)).toEqual([id1]);
+  });
+
+  it("returns empty array when no embeddings exist", () => {
+    const top = embRepo.topKByCosine(new Float32Array([1, 0, 0, 0]), projectId, "test-model", 10);
+    expect(top).toEqual([]);
+  });
+
+  it("skips soft-deleted memories", () => {
+    const id1 = memRepo.store({ title: "M1", body: "", memoryType: "fact", scope: "project", projectId });
+    embRepo.upsert(id1, "test-model", new Float32Array([1, 0, 0, 0]));
+    db.prepare(`UPDATE memories SET deleted_at = datetime('now') WHERE id = ?`).run(id1);
+
+    const top = embRepo.topKByCosine(new Float32Array([1, 0, 0, 0]), projectId, "test-model", 10);
+    expect(top).toEqual([]);
+  });
+});

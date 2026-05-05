@@ -11,6 +11,7 @@ export function toCompressionConfig(config: Config): CompressionConfig {
     min_cluster_size: config.compression.minClusterSize,
     max_body_ratio: config.compression.maxBodyRatio,
     temporal_window_hours: config.compression.temporalWindowHours,
+    qualityFloor: config.compression.qualityFloor,
   };
 }
 

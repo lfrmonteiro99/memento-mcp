@@ -26,9 +26,18 @@ function safeBody(m: MemoryRow): string | undefined {
   return m.body !== undefined ? redactPrivate(m.body) : undefined;
 }
 
+/** P4 Task 7: marker rendered after the title when an anchor is non-fresh.
+ * `fresh` and absent are intentionally not surfaced — only stale/anchor-deleted
+ * are actionable for the reader. */
+function anchorMarker(m: MemoryRow): string {
+  const status = (m as any).anchor_status;
+  if (status === "stale" || status === "anchor-deleted") return ` [${status}]`;
+  return "";
+}
+
 function formatIndexLine(m: MemoryRow): string {
   const score = typeof m.score === "number" ? m.score.toFixed(2) : "-";
-  return `[${m.memory_type}] ${m.title} (score:${score}, id:${m.id})`;
+  return `[${m.memory_type}] ${m.title}${anchorMarker(m)} (score:${score}, id:${m.id})`;
 }
 
 export function formatIndex(memories: MemoryRow[]): string {
@@ -71,7 +80,7 @@ export function formatFull(memories: MemoryRow[], bodyPreviewChars = 200): strin
     const score = typeof m.score === "number" ? m.score.toFixed(2) : "-";
     const body = safeBody(m);
     const lines = [
-      `[${src}] (${m.memory_type}) ${m.title}`,
+      `[${src}] (${m.memory_type}) ${m.title}${anchorMarker(m)}`,
       `  ID: ${m.id}`,
     ];
     if (body) {
@@ -91,7 +100,7 @@ export function formatFull(memories: MemoryRow[], bodyPreviewChars = 200): strin
     const score = typeof m.score === "number" ? m.score.toFixed(2) : "-";
     const body = safeBody(m);
     const lines = [
-      `[${src}] (${m.memory_type}) ${m.title}`,
+      `[${src}] (${m.memory_type}) ${m.title}${anchorMarker(m)}`,
       `  ID: ${m.id}`,
     ];
     if (body) {
